@@ -6,6 +6,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 import os
 import asyncio
+import time  # For timestamp
 
 # ----------------- Logging Setup -----------------
 logging.basicConfig(
@@ -79,16 +80,24 @@ async def extract_from_txt(client, message: Message):
             await asyncio.sleep(0.5)
 
         unique_ids = list(set(final_track_ids))
-        result_file = "all_tracks.txt"
+
+        # Unique filename with timestamp
+        timestamp = int(time.time())
+        result_file = f"all_tracks_{timestamp}.txt"
+
         with open(result_file, "w") as f:
             f.write("\n".join(unique_ids))
 
         logger.info(f"✅ Total Unique Tracks Extracted: {len(unique_ids)}")
         await message.reply_document(result_file, caption=f"✅ Extracted {len(unique_ids)} unique track IDs.")
+        
+        # Remove the result file after sending
         os.remove(result_file)
 
     except Exception as e:
         logger.exception("An error occurred during processing.")
         await message.reply(f"❌ Error: {e}")
     finally:
-        os.remove(file_path)
+        # Remove the downloaded playlist file safely
+        if os.path.exists(file_path):
+            os.remove(file_path)
