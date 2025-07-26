@@ -19,43 +19,50 @@ SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 import json
 
 async def extract_track_ids_playwright(playlist_url):
+    from playwright.async_api import async_playwright
+    import asyncio
+    from loguru import logger  # ya logging module
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
             await page.goto(playlist_url, wait_until="networkidle")
 
-            # Scroll Spotify ke specific scroll container ko, na ki pura window
+            await asyncio.sleep(5)  # Allow full DOM render
+
+            # Spotify's scrollable container
+            scroll_container_selector = 'div[role="presentation"] > div > div:nth-child(2)'
+
             previous_height = 0
-            for _ in range(50):  # zyada scroll karenge
-                current_height = await page.evaluate("""
-                    () => {
-                        const scrollable = document.querySelector('div[role="presentation"] > div > div');
-                        return scrollable ? scrollable.scrollHeight : 0;
-                    }
-                """)
+            for _ in range(50):  # Maximum 50 scroll attempts
+                current_height = await page.evaluate(f'''
+                    () => {{
+                        const el = document.querySelector("{scroll_container_selector}");
+                        return el ? el.scrollHeight : 0;
+                    }}
+                ''')
+
                 if current_height == previous_height:
-                    break
+                    break  # No new content loaded
                 previous_height = current_height
 
-                await page.evaluate("""
-                    () => {
-                        const scrollable = document.querySelector('div[role="presentation"] > div > div');
-                        if(scrollable) scrollable.scrollTo(0, scrollable.scrollHeight);
-                    }
-                """)
-                await asyncio.sleep(3)  # thoda zyada wait karo taaki tracks load ho jaye
+                await page.evaluate(f'''
+                    () => {{
+                        const el = document.querySelector("{scroll_container_selector}");
+                        if (el) el.scrollTo(0, el.scrollHeight);
+                    }}
+                ''')
+                await asyncio.sleep(2.5)  # Wait for new items to load
 
-            # Ab DOM se sare track links le lo
+            # Now collect track IDs
             anchors = await page.query_selector_all('a[href^="/track/"]')
-
             track_ids = set()
-            for a in anchors:
-                href = await a.get_attribute("href")
-                if href:
-                    parts = href.split('/')
-                    if len(parts) >= 3 and parts[1] == "track":
-                        track_ids.add(parts[2])
+            for anchor in anchors:
+                href = await anchor.get_attribute("href")
+                if href and "/track/" in href:
+                    track_id = href.split("/track/")[1].split("?")[0]
+                    track_ids.add(track_id)
 
             await browser.close()
             logger.info(f"Playwright scraped {len(track_ids)} tracks from: {playlist_url}")
@@ -64,6 +71,7 @@ async def extract_track_ids_playwright(playlist_url):
     except Exception as e:
         logger.error(f"Playwright error scraping {playlist_url}: {e}")
         return []
+
 
 @Client.on_message(filters.command("extracttracks") & filters.reply)
 async def extract_from_txt(client, message: Message):
