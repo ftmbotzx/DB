@@ -25,25 +25,34 @@ async def extract_track_ids_playwright(playlist_url):
             page = await browser.new_page()
             await page.goto(playlist_url, wait_until="networkidle")
 
-            # Scroll to bottom multiple times to load all tracks
-            previous_height = None
-            for _ in range(30):
-                current_height = await page.evaluate("document.body.scrollHeight")
+            # Scroll Spotify ke specific scroll container ko, na ki pura window
+            previous_height = 0
+            for _ in range(50):  # zyada scroll karenge
+                current_height = await page.evaluate("""
+                    () => {
+                        const scrollable = document.querySelector('div[role="presentation"] > div > div');
+                        return scrollable ? scrollable.scrollHeight : 0;
+                    }
+                """)
                 if current_height == previous_height:
                     break
                 previous_height = current_height
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(2)
 
-            # Query all track link elements from DOM
-            # Spotify playlist tracks are often inside <a> tags with href like "/track/{id}"
+                await page.evaluate("""
+                    () => {
+                        const scrollable = document.querySelector('div[role="presentation"] > div > div');
+                        if(scrollable) scrollable.scrollTo(0, scrollable.scrollHeight);
+                    }
+                """)
+                await asyncio.sleep(3)  # thoda zyada wait karo taaki tracks load ho jaye
+
+            # Ab DOM se sare track links le lo
             anchors = await page.query_selector_all('a[href^="/track/"]')
 
             track_ids = set()
             for a in anchors:
                 href = await a.get_attribute("href")
                 if href:
-                    # href format: /track/{track_id}
                     parts = href.split('/')
                     if len(parts) >= 3 and parts[1] == "track":
                         track_ids.add(parts[2])
@@ -55,7 +64,6 @@ async def extract_track_ids_playwright(playlist_url):
     except Exception as e:
         logger.error(f"Playwright error scraping {playlist_url}: {e}")
         return []
-
 
 @Client.on_message(filters.command("extracttracks") & filters.reply)
 async def extract_from_txt(client, message: Message):
