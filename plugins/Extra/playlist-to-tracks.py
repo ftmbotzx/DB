@@ -16,28 +16,31 @@ logger = logging.getLogger(__name__)
 
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 
-# Playwright based scraper to get full tracks list
 async def extract_track_ids_playwright(playlist_url):
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True
+                # headless=False  # Debug mode: browser window dikhega
+            )
             page = await browser.new_page()
-            await page.goto(playlist_url)
+            await page.goto(playlist_url, wait_until="networkidle")
 
-            # Scroll multiple times to load full playlist
             previous_height = None
-            for _ in range(20):  # adjust scroll count as needed
+            for i in range(30):  # Scroll 30 times max
                 current_height = await page.evaluate("document.body.scrollHeight")
                 if previous_height == current_height:
+                    logger.info(f"Scroll stopped at iteration {i}")
                     break
                 previous_height = current_height
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)  # Wait 3 seconds for content load
 
             content = await page.content()
             await browser.close()
 
-            track_ids = list(set(re.findall(r"spotify:track:([a-zA-Z0-9]+)", content)))
+            # Updated regex to find track IDs inside JSON in page source
+            track_ids = list(set(re.findall(r'"uri":"spotify:track:([a-zA-Z0-9]+)"', content)))
             logger.info(f"Playwright scraped {len(track_ids)} tracks from: {playlist_url}")
             return track_ids
 
@@ -65,14 +68,14 @@ async def extract_from_txt(client, message: Message):
         status = await message.reply(f"🌀 Found {total} playlists. Starting scraping...")
 
         for idx, url in enumerate(full_links, start=1):
-            ids = await extract_track_ids_playwright(url)  # <-- Playwright scraper here
+            ids = await extract_track_ids_playwright(url)
             final_track_ids.extend(ids)
 
-            if idx % 5 == 0 or idx == total:  # more frequent updates because Playwright slow
+            if idx % 5 == 0 or idx == total:
                 await status.edit(f"🔍 Scraped {idx}/{total} playlists...\nLatest: {url}")
                 logger.info(f"Updated progress message at {idx}/{total}")
 
-            await asyncio.sleep(1)  # small delay between playlist scraping
+            await asyncio.sleep(1)  # small delay
 
         unique_ids = list(set(final_track_ids))
         result_file = "all_tracks.txt"
