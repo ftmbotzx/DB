@@ -25,31 +25,32 @@ async def extract_track_ids_playwright(playlist_url):
             page = await browser.new_page()
             await page.goto(playlist_url, wait_until="networkidle")
 
-            # Scroll once to load content
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(3)
+            # Scroll to bottom multiple times to load all tracks
+            previous_height = None
+            for _ in range(30):
+                current_height = await page.evaluate("document.body.scrollHeight")
+                if current_height == previous_height:
+                    break
+                previous_height = current_height
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(2)
 
-            # Fetch the JSON data from __NEXT_DATA__ script tag
-            json_data = await page.eval_on_selector('script[id="__NEXT_DATA__"]', 'el => el.textContent')
-            playlist_json = json.loads(json_data)
+            # Query all track link elements from DOM
+            # Spotify playlist tracks are often inside <a> tags with href like "/track/{id}"
+            anchors = await page.query_selector_all('a[href^="/track/"]')
 
-            # Navigate JSON to get track IDs
-            track_ids = []
-
-            # This path depends on Spotify's JSON structure; example:
-            try:
-                tracks = playlist_json["props"]["pageProps"]["playlist"]["tracks"]["items"]
-                for item in tracks:
-                    track = item.get("track")
-                    if track and track.get("id"):
-                        track_ids.append(track["id"])
-            except Exception as e:
-                # Fallback if JSON structure changes
-                pass
+            track_ids = set()
+            for a in anchors:
+                href = await a.get_attribute("href")
+                if href:
+                    # href format: /track/{track_id}
+                    parts = href.split('/')
+                    if len(parts) >= 3 and parts[1] == "track":
+                        track_ids.add(parts[2])
 
             await browser.close()
             logger.info(f"Playwright scraped {len(track_ids)} tracks from: {playlist_url}")
-            return list(set(track_ids))
+            return list(track_ids)
 
     except Exception as e:
         logger.error(f"Playwright error scraping {playlist_url}: {e}")
