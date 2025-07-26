@@ -1,12 +1,13 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from plugins.spotify_client import sp
+from plugins.spotify_client import sp  # Spotify client global config
+import asyncio
 
-@Client.on_message(filters.command("playlist"))
+@Client.on_message(filters.command("allplaylists"))
 async def get_all_global_playlists(client: Client, message: Message):
     try:
-        await message.reply("🌍 Searching for top Spotify playlists globally... Please wait.", quote=True)
+        await message.reply("🌍 Fetching top Spotify playlists globally... Please wait.", quote=True)
 
         queries = [
             "top hits", "global hits", "trending now", "world music", "pop hits", "party songs",
@@ -18,25 +19,41 @@ async def get_all_global_playlists(client: Client, message: Message):
         playlists_dict = {}
 
         for query in queries:
-            for offset in range(0, 300, 50):  # Fetch 300 playlists per query
-                results = sp.search(q=query, type="playlist", limit=50, offset=offset)
-                for item in results["playlists"]["items"]:
-                    name = item["name"]
-                    url = f"https://open.spotify.com/playlist/{item['id']}"
-                    playlists_dict[name] = url
+            for offset in range(0, 300, 50):  # Max 300 playlists per query
+                try:
+                    results = sp.search(q=query, type="playlist", limit=50, offset=offset)
+                    await asyncio.sleep(0.3)  # avoid rate limit
+                except Exception as err:
+                    print(f"Spotify error on query '{query}': {err}")
+                    continue
 
-        # Sort and build result
+                # Safeguard check
+                if not results or "playlists" not in results or not results["playlists"]:
+                    continue
+
+                items = results["playlists"].get("items", [])
+                for item in items:
+                    name = item.get("name")
+                    playlist_id = item.get("id")
+                    if name and playlist_id:
+                        url = f"https://open.spotify.com/playlist/{playlist_id}"
+                        playlists_dict[name] = url
+
+        # Sort and format
         sorted_playlists = sorted(playlists_dict.items())
         total = len(sorted_playlists)
 
-        # Write to file
-        with open("global_playlists.txt", "w", encoding="utf-8") as f:
+        if total == 0:
+            return await message.reply("❌ No playlists found.")
+
+        file_name = "global_playlists.txt"
+        with open(file_name, "w", encoding="utf-8") as f:
             for idx, (name, url) in enumerate(sorted_playlists, 1):
                 f.write(f"{idx}. {name} - {url}\n")
 
         await message.reply_document(
-            "global_playlists.txt",
-            caption=f"✅ Found `{total}` unique Spotify playlists worldwide."
+            file_name,
+            caption=f"✅ Found `{total}` unique Spotify playlists from around the world."
         )
 
     except Exception as e:
