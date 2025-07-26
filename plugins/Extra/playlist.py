@@ -1,9 +1,11 @@
+import time
+import os
+import asyncio
+import logging
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import asyncio
-import spotipy
-import logging
-from spotipy.oauth2 import SpotifyClientCredentials
 
 # 🔧 Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +17,6 @@ client_id = "c6e8b0da7751415e848a97f309bc057d"
 auth_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
 sp = spotipy.Spotify(auth_manager=auth_manager)
 
-# 🌟 Default search terms if user doesn't provide custom queries
 DEFAULT_QUERIES = [
     "bollywood hits", "top hindi songs", "indian classical", "desi hip hop", "punjabi hits",
     "gujarati garba", "indian devotional", "arijit singh", "shreya ghoshal", "indian pop",
@@ -28,13 +29,11 @@ DEFAULT_QUERIES = [
 @Client.on_message(filters.command("playlist"))
 async def get_custom_playlists(client: Client, message: Message):
     try:
-        args = message.text.split(None, 1)  # Split command and rest of text
+        args = message.text.split(None, 1)
         if len(args) > 1:
-            # 📌 Parse queries from user input (split by comma or space)
             user_input = args[1].lower()
             queries = [q.strip() for q in user_input.replace(",", " ").split() if q.strip()]
         else:
-            # Use default queries if none provided
             queries = DEFAULT_QUERIES
 
         if not queries:
@@ -73,7 +72,7 @@ async def get_custom_playlists(client: Client, message: Message):
         if total == 0:
             return await message.reply("❌ No playlists found. Try again later.")
 
-        file_name = "custom_playlists.txt"
+        file_name = f"custom_playlists_{int(time.time())}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             for idx, (name, url) in enumerate(sorted(playlists_dict.items()), 1):
                 f.write(f"{idx}. {name} - {url}\n")
@@ -83,10 +82,9 @@ async def get_custom_playlists(client: Client, message: Message):
             caption=f"✅ Found `{total}` unique playlists for your search."
         )
 
+        # Remove file after sending to keep your server clean
+        os.remove(file_name)
+
     except Exception as e:
         logger.exception("❌ Final error occurred.")
         await message.reply(f"❌ Final Error: `{e}`")
-
-
-
-
