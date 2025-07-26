@@ -64,7 +64,7 @@ async def check_tracks_in_db(client, message):
     
     total_tracks = len(lines)
 
-    # 🔄 Step 1: Fetch all existing track_ids from DB
+
     existing_tracks = set()
     async for doc in db.dump_col.find({}, {"track_id": 1, "_id": 0}):
         existing_tracks.add(doc["track_id"])
@@ -79,7 +79,7 @@ async def check_tracks_in_db(client, message):
         else:
             already_in_db += 1
 
-        if idx % 5000 == 0 or idx == total_tracks:
+        if idx % 10000 == 0 or idx == total_tracks:
             text = (
                 f"🔎 Checking tracks...\n"
                 f"Total: {total_tracks}\n"
@@ -96,7 +96,7 @@ async def check_tracks_in_db(client, message):
     if not new_tracks:
         return await status_msg.edit("✅ Done! All tracks already exist in DB.")
 
-    batch_size = 10000
+    batch_size = 10000000
     batches = [new_tracks[i:i + batch_size] for i in range(0, len(new_tracks), batch_size)]
 
     for i, batch in enumerate(batches, 1):
