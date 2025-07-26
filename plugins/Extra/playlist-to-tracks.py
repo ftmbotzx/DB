@@ -16,7 +16,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 logger = logging.getLogger(__name__)
-
+ 
 # ----------------- Spotify Auth -----------------
 SPOTIFY_CLIENT_ID = "8361260e407b41cf830dbaeb47e4065a"
 SPOTIFY_CLIENT_SECRET = "ef93481f760a40358aae44759d47740e"
