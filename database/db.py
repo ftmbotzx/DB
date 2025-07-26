@@ -78,7 +78,12 @@ class Database:
         self.db = self.client[MONGO_NAME]
         self.dump_col = self.db["dump"]
         self.media_col = self.db[COLLECTION_NAME]
-
+        self.tasks_collection = self.db["tasks"]
+        self.tasks = self.db["tasks"]
+        self.bots = self.db["bots"]
+        self.tracks = self.db["tracks"]
+        self.track_files = self.db["track_files"]
+        
     # Dump file_id ↔️ track_id mapping
     async def save_dump_file_id(self, track_id: str, file_id: str):
         await self.dump_col.update_one(
