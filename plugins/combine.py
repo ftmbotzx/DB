@@ -10,7 +10,7 @@ COMBINED_FILE = "combined_track_ids.txt"
 async def auto_combine_track_ids(client, message):
     if not message.document.file_name.endswith(".txt"):
         return
-
+ 
     file_path = await message.download()
     added_ids = 0
 
