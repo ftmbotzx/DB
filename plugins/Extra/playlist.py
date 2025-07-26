@@ -1,6 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from spotify_client import sp
+from plugins.spotify_client import sp
 import asyncio
 
 @Client.on_message(filters.command("allplaylists"))
