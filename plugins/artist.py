@@ -38,8 +38,9 @@ async def generate_monitor_text():
 
     bot_statuses = defaultdict(lambda: {"status": None, "sent": 0, "skipped": 0, "failed": 0, "updated_at": None})
     total_sent = total_skipped = total_failed = 0
-    latest_time = None
-    earliest_time = None
+
+    start_times = []
+    end_times = []
 
     for task in tasks:
         bot_id = task.get("bot_name", "N/A")
@@ -47,8 +48,24 @@ async def generate_monitor_text():
         sent = task.get("sent_count", 0)
         skipped = task.get("skipped_count", 0)
         failed = task.get("failed_count", 0)
-        updated = task.get("updated_at") or task.get("assigned_at")
 
+        # Parse assigned_at
+        assigned = task.get("assigned_at")
+        assigned_dt = None
+        if assigned:
+            if isinstance(assigned, str):
+                assigned_dt = parse_datetime_with_tz(assigned)
+            else:
+                assigned_dt = assigned
+            if assigned_dt:
+                if assigned_dt.tzinfo is None:
+                    assigned_dt = ist.localize(assigned_dt)
+                else:
+                    assigned_dt = assigned_dt.astimezone(ist)
+                start_times.append(assigned_dt)
+
+        # Parse updated_at
+        updated = task.get("updated_at")
         updated_dt = None
         if updated:
             if isinstance(updated, str):
@@ -60,12 +77,7 @@ async def generate_monitor_text():
                     updated_dt = ist.localize(updated_dt)
                 else:
                     updated_dt = updated_dt.astimezone(ist)
-
-        if updated_dt:
-            if not earliest_time or updated_dt < earliest_time:
-                earliest_time = updated_dt
-            if not latest_time or updated_dt > latest_time:
-                latest_time = updated_dt
+                end_times.append(updated_dt)
 
         bot_statuses[bot_id]["status"] = status
         bot_statuses[bot_id]["sent"] = sent
@@ -113,26 +125,33 @@ async def generate_monitor_text():
         f"❌ **Total Failed:** {total_failed}\n"
     )
 
-    # Add speed & elapsed time if possible
-    if earliest_time and latest_time and latest_time > earliest_time:
-        total_minutes = (latest_time - earliest_time).total_seconds() / 60
-        if total_minutes > 0:
-            per_min_speed = total_sent / total_minutes
-            per_day_est = int(per_min_speed * 1440)
+    # Speed & Elapsed Time using start & end times
+    if start_times and end_times:
+        earliest_time = min(start_times)
+        latest_time = max(end_times)
+        if latest_time > earliest_time:
+            total_minutes = (latest_time - earliest_time).total_seconds() / 60
+            if total_minutes >= 1:
+                per_min_speed = total_sent / total_minutes
+                per_day_est = int(per_min_speed * 1440)
 
-            elapsed = latest_time - earliest_time
-            hours = elapsed.seconds // 3600
-            minutes = (elapsed.seconds % 3600) // 60
-            time_elapsed_str = f"{elapsed.days * 24 + hours} hr {minutes} min"
+                elapsed = latest_time - earliest_time
+                hours = elapsed.seconds // 3600
+                minutes = (elapsed.seconds % 3600) // 60
+                time_elapsed_str = f"{elapsed.days * 24 + hours} hr {minutes} min"
 
-            text += (
-                f"\n🚀 **Speed**: {per_min_speed:.2f}/min (~{per_day_est:,}/day)\n"
-                f"⏱️ **Time Elapsed:** {time_elapsed_str}\n"
-            )
+                text += (
+                    f"\n🚀 **Speed**: {per_min_speed:.2f}/min (~{per_day_est:,}/day)\n"
+                    f"⏱️ **Time Elapsed:** {time_elapsed_str}\n"
+                )
+            else:
+                text += "\n⚠️ Not enough time has passed to calculate speed.\n"
+        else:
+            text += "\n⚠️ Speed calculation skipped due to insufficient time gap.\n"
+    else:
+        text += "\n⚠️ Missing assigned/updated timestamps for speed calculation.\n"
 
     return text
-
-
 
 @Client.on_message(filters.command("monitor") & filters.private)
 async def monitor_tasks(client, message):
