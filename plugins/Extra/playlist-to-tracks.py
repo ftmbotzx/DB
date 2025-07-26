@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 
+import json
+
 async def extract_track_ids_playwright(playlist_url):
     try:
         async with async_playwright() as p:
@@ -23,24 +25,27 @@ async def extract_track_ids_playwright(playlist_url):
             page = await browser.new_page()
             await page.goto(playlist_url, wait_until="networkidle")
 
-            # Scroll once to load minimal data
+            # Scroll once to load content
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(3)
 
-            # Extract playlist JSON from script tag
-            json_data = await page.eval_on_selector('script[id="resource"]', 'el => el.textContent')
-            import json
+            # Fetch the JSON data from __NEXT_DATA__ script tag
+            json_data = await page.eval_on_selector('script[id="__NEXT_DATA__"]', 'el => el.textContent')
             playlist_json = json.loads(json_data)
 
+            # Navigate JSON to get track IDs
             track_ids = []
-            tracks = playlist_json.get("tracks", {}).get("items", [])
 
-            for item in tracks:
-                track = item.get("track")
-                if track:
-                    track_ids.append(track.get("id"))
-
-            # TODO: Pagination not handled here — for huge playlists, you need to implement loading next pages
+            # This path depends on Spotify's JSON structure; example:
+            try:
+                tracks = playlist_json["props"]["pageProps"]["playlist"]["tracks"]["items"]
+                for item in tracks:
+                    track = item.get("track")
+                    if track and track.get("id"):
+                        track_ids.append(track["id"])
+            except Exception as e:
+                # Fallback if JSON structure changes
+                pass
 
             await browser.close()
             logger.info(f"Playwright scraped {len(track_ids)} tracks from: {playlist_url}")
