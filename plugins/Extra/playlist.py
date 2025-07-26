@@ -1,7 +1,18 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from plugins.spotify_client import sp
 import asyncio
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+
+client_secret = "97d40c2c7b7948589df58d838b8e9e68"
+client_id = "c6e8b0da7751415e848a97f309bc057d"
+
+auth_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
+sp = spotipy.Spotify(auth_manager=auth_manager)
+
+
+
+
 
 @Client.on_message(filters.command("allplaylists"))
 async def get_all_global_playlists(client: Client, message: Message):
