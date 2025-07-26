@@ -1,6 +1,7 @@
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.errors import MessageNotModified
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import re
@@ -74,7 +75,11 @@ async def extract_from_txt(client, message: Message):
             final_track_ids.extend(ids)
 
             if idx % 5 == 0 or idx == total:
-                await status.edit(f"🔍 Extracted {idx}/{total} playlists.")
+                try:
+                    await status.edit(f"🔍 Extracted {idx}/{total} playlists.")
+                except MessageNotModified:
+                    # Ignore if message text is same as before
+                    pass
                 logger.info(f"⏳ Progress: {idx}/{total}")
 
             await asyncio.sleep(0.5)
