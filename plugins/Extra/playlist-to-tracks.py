@@ -19,34 +19,37 @@ SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 async def extract_track_ids_playwright(playlist_url):
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True
-                # headless=False  # Debug mode: browser window dikhega
-            )
+            browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
             await page.goto(playlist_url, wait_until="networkidle")
 
-            previous_height = None
-            for i in range(30):  # Scroll 30 times max
-                current_height = await page.evaluate("document.body.scrollHeight")
-                if previous_height == current_height:
-                    logger.info(f"Scroll stopped at iteration {i}")
-                    break
-                previous_height = current_height
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(3)  # Wait 3 seconds for content load
+            # Scroll once to load minimal data
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(3)
 
-            content = await page.content()
+            # Extract playlist JSON from script tag
+            json_data = await page.eval_on_selector('script[id="resource"]', 'el => el.textContent')
+            import json
+            playlist_json = json.loads(json_data)
+
+            track_ids = []
+            tracks = playlist_json.get("tracks", {}).get("items", [])
+
+            for item in tracks:
+                track = item.get("track")
+                if track:
+                    track_ids.append(track.get("id"))
+
+            # TODO: Pagination not handled here — for huge playlists, you need to implement loading next pages
+
             await browser.close()
-
-            # Updated regex to find track IDs inside JSON in page source
-            track_ids = list(set(re.findall(r'"uri":"spotify:track:([a-zA-Z0-9]+)"', content)))
             logger.info(f"Playwright scraped {len(track_ids)} tracks from: {playlist_url}")
-            return track_ids
+            return list(set(track_ids))
 
     except Exception as e:
         logger.error(f"Playwright error scraping {playlist_url}: {e}")
         return []
+
 
 @Client.on_message(filters.command("extracttracks") & filters.reply)
 async def extract_from_txt(client, message: Message):
