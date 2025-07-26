@@ -65,7 +65,7 @@ async def check_tracks_in_db(client, message):
 
     # 🔄 Step 1: Fetch all existing track_ids from DB
     existing_tracks = set()
-    async for doc in db.dump_collection.find({}, {"track_id": 1, "_id": 0}):
+    async for doc in db.dump_col.find({}, {"track_id": 1, "_id": 0}):
         existing_tracks.add(doc["track_id"])
 
     # 🔍 Step 2: Check each track against existing set
