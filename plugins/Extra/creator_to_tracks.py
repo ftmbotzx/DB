@@ -51,6 +51,7 @@ async def process_user_file(client: Client, message: Message):
     status_msg = await message.reply(f"⏳ Starting to process {total_users} users from the file...")
 
     global_total_tracks = 0
+    all_users_track_ids = []  # <-- New list to collect all users' tracks
 
     for user_index, line in enumerate(lines, start=1):
         if "-" not in line:
@@ -74,10 +75,11 @@ async def process_user_file(client: Client, message: Message):
                 await status_msg.edit(f"⚠️ No public playlists found for user **{user_name}**.")
                 continue
 
-            all_track_ids = []
             total_playlists = 0
             total_tracks_user = 0
             total_playlists_count = playlists.get("total") or None
+
+            user_track_ids = []
 
             while playlists:
                 for playlist in playlists['items']:
@@ -91,7 +93,7 @@ async def process_user_file(client: Client, message: Message):
                         for item in tracks['items']:
                             track = item['track']
                             if track:
-                                all_track_ids.append(track['id'])
+                                user_track_ids.append(track['id'])
                                 total_tracks_user += 1
                                 playlist_tracks_count += 1
                         if tracks['next']:
@@ -116,25 +118,13 @@ async def process_user_file(client: Client, message: Message):
                 else:
                     playlists = None
 
-            unique_ids = list(set(all_track_ids))
-            timestamp = int(time.time())
-            file_name = f"{user_name}_{user_id}_tracks_{timestamp}.txt"
-
-            with open(file_name, "w", encoding="utf-8") as f:
-                for tid in unique_ids:
-                    f.write(f"{tid}\n")
-
-            await client.send_document(
-                chat_id=message.chat.id,
-                document=file_name,
-                caption=f"✅ **{user_name}** | Total unique track IDs: {len(unique_ids)}"
-            )
-            os.remove(file_name)
+            unique_user_tracks = list(set(user_track_ids))
+            all_users_track_ids.extend(unique_user_tracks)  # add user's unique tracks to global list
 
             await status_msg.edit(
                 f"✅ Completed [{user_index}/{total_users}]: **{user_name}**\n"
                 f"📀 Total playlists: {total_playlists}\n"
-                f"🎵 Unique tracks: {len(unique_ids)}\n"
+                f"🎵 Unique tracks: {len(unique_user_tracks)}\n"
                 f"🎧 Total tracks collected from ALL users: {global_total_tracks}"
             )
 
@@ -142,7 +132,21 @@ async def process_user_file(client: Client, message: Message):
             await message.reply(f"❌ Error fetching tracks for **{user_name}**: {e}")
             logger.error(f"Error fetching tracks for user {user_id}: {e}")
 
+    # After processing all users, write all unique tracks to one file
+    all_unique_tracks = list(set(all_users_track_ids))
+    timestamp = int(time.time())
+    file_name = f"all_users_tracks_{timestamp}.txt"
+
+    with open(file_name, "w", encoding="utf-8") as f:
+        for tid in all_unique_tracks:
+            f.write(f"{tid}\n")
+
+    await client.send_document(
+        chat_id=message.chat.id,
+        document=file_name,
+        caption=f"✅ Total unique track IDs from all users: {len(all_unique_tracks)}"
+    )
+    os.remove(file_name)
     os.remove(file_path)
-    await status_msg.edit("🎉 All users processed. Check your chat for files!")   
 
-
+    await status_msg.edit("🎉 All users processed. Check your chat for the combined tracks file!")
