@@ -1,114 +1,213 @@
-import time
-import re
 from pyrogram import Client, filters
-from spotipy import SpotifyException
-import logging
-from plugins.spotify_client_manager import SpotifyClientManager  # Import the custom manager
-import aiohttp
-import asyncio
-import itertools
-import base64
-import logging
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from collections import defaultdict
+from datetime import datetime, timedelta
+import pytz
 
-logger = logging.getLogger(__name__)
 
-# Define your multiple Spotify clients
-clients = [
-    {"client_id": "87c0e80d2698480b8130e1940949e438", "client_secret": "3c58dd0817b04641a4e0a918e4c7fe2c"},
-    {"client_id": "8afb35368d464b5ba5615fbaeae7ed20", "client_secret": "f317c8085a81406bb6244c8c3182f283"},
-    {"client_id": "46dccaad9e6b46c396bf9d140325c2fb", "client_secret": "3b6b00a5d5454a0888c2098b628ab5f8"},
-]
+from database.db import db
 
-spotify_manager = SpotifyClientManager(clients)
 
-async def safe_spotify_call(endpoint_url, params=None):
-    while True:
-        response = await spotify_manager.make_request(endpoint_url, params)
-        if response is not None:
-            return response
-        await asyncio.sleep(1)
+from datetime import datetime, timedelta, timezone
+import re
 
-@Client.on_message(filters.command("artist") & filters.private & filters.reply)
-async def artist_bulk_tracsdks(client, message):
-    if not message.reply_to_message or not message.reply_to_message.document:
-        await message.reply("❗ Please reply to a .txt file containing artist links.")
-        return
+def parse_datetime_with_tz(datetime_str):
+    match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([+-])(\d{2})(\d{2})", datetime_str)
+    if match:
+        dt_part, sign, hours_offset, minutes_offset = match.groups()
+        dt = datetime.strptime(dt_part, "%Y-%m-%d %H:%M:%S")
+        offset = timedelta(hours=int(hours_offset), minutes=int(minutes_offset))
+        if sign == '-':
+            offset = -offset
+        tz = timezone(offset)
+        return dt.replace(tzinfo=tz)
+    return None
 
-    status_msg = await message.reply("📥 Downloading file...")
 
-    file_path = await message.reply_to_message.download()
-    with open(file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+async def generate_monitor_text():
+    tasks = await db.tasks_collection.find().to_list(length=1000)
+    bots = await db.bots.find({"active": True}).to_list(None)
 
-    all_tracks = []
-    artist_counter = 0
+    if not tasks and not bots:
+        return "📭 No bots or tasks found yet."
 
-    for line in lines:
-        match = re.search(r"spotify\.com/artist/([a-zA-Z0-9]+)", line)
-        if not match:
-            continue
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
 
-        artist_id = match.group(1)
-        artist_counter += 1
+    text = "📊 **Current Task Status**\n\n"
 
-        try:
-            logger.info(f"🎤 Fetching albums for Artist {artist_counter}: {artist_id}")
-            album_ids = set()
+    bot_statuses = defaultdict(lambda: {"status": None, "sent": 0, "skipped": 0, "failed": 0, "updated_at": None})
+    total_sent = total_skipped = total_failed = 0
+    latest_time = None
+    earliest_time = None
 
-            url = f"https://api.spotify.com/v1/artists/{artist_id}/albums"
-            params = {"album_type": "album,single", "limit": 50}
-            results = await safe_spotify_call(url, params)
+    for task in tasks:
+        bot_id = task.get("bot_name", "N/A")
+        status = task.get("status", "N/A").capitalize()
+        sent = task.get("sent_count", 0)
+        skipped = task.get("skipped_count", 0)
+        failed = task.get("failed_count", 0)
+        updated = task.get("updated_at") or task.get("assigned_at")
 
-            album_ids.update([album['id'] for album in results['items']])
+        updated_dt = None
+        if updated:
+            if isinstance(updated, str):
+                updated_dt = parse_datetime_with_tz(updated)
+            else:
+                updated_dt = updated
+            if updated_dt:
+                if updated_dt.tzinfo is None:
+                    updated_dt = ist.localize(updated_dt)
+                else:
+                    updated_dt = updated_dt.astimezone(ist)
 
-            while results.get('next'):
-                url = results['next']
-                results = await safe_spotify_call(url)
-                album_ids.update([album['id'] for album in results['items']])
+        if updated_dt:
+            if not earliest_time or updated_dt < earliest_time:
+                earliest_time = updated_dt
+            if not latest_time or updated_dt > latest_time:
+                latest_time = updated_dt
 
-            logger.info(f"📀 Total releases: {len(album_ids)}")
+        bot_statuses[bot_id]["status"] = status
+        bot_statuses[bot_id]["sent"] = sent
+        bot_statuses[bot_id]["skipped"] = skipped
+        bot_statuses[bot_id]["failed"] = failed
+        bot_statuses[bot_id]["updated_at"] = updated_dt
 
-            for idx, release_id in enumerate(album_ids, 1):
-                try:
-                    url = f"https://api.spotify.com/v1/albums/{release_id}/tracks"
-                    tracks = await safe_spotify_call(url)
-                    all_tracks.extend([track['id'] for track in tracks['items']])
-                    await asyncio.sleep(0.2)
+        total_sent += sent
+        total_skipped += skipped
+        total_failed += failed
 
-                    if idx % 50 == 0:
-                        await asyncio.sleep(3)
-                except Exception as e:
-                    logger.warning(f"⚠️ Error fetching album {release_id}: {e}")
-                    continue
+    total_bots_from_tasks = len(bot_statuses)
+    total_active_bots = len(bots)
+    running_tasks_count = 0
 
-        except Exception as e:
-            logger.warning(f"⚠️ Error with artist {artist_id}: {e}")
-            await client.send_message(message.chat.id, f"⚠️ Error fetching {artist_id}: {e}")
-            continue
+    for bot_id, data in bot_statuses.items():
+        status = data['status']
+        updated_at = data['updated_at']
 
-        if len(all_tracks) >= 5000:
-            batch = all_tracks[:5000]
-            all_tracks = all_tracks[5000:]
-            part_file = f"tracks_part_{artist_counter}.txt"
-            with open(part_file, "w", encoding="utf-8") as f:
-                f.write("\n".join(batch))
+        too_old = False
+        if updated_at:
+            diff = now - updated_at
+            if diff > timedelta(minutes=30):
+                too_old = True
 
-            await client.send_document(
-                chat_id=message.chat.id,
-                document=part_file,
-                caption=f"✅ Part from Artist #{artist_counter} (5000 tracks)"
-            )
-            await asyncio.sleep(3)
+        if status and status.lower() == "running" and not too_old:
+            status_icon = "✅"
+            running_tasks_count += 1
+        else:
+            status_icon = "❌"
 
-    if all_tracks:
-        part_file = f"tracks_final.txt"
-        with open(part_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(all_tracks))
+        updated_str = updated_at.strftime("%d %b %Y %I:%M %p") if updated_at else "N/A"
 
-        await client.send_document(
-            chat_id=message.chat.id,
-            document=part_file,
-            caption=f"✅ Final batch — Total tracks: {len(all_tracks)}"
+        text += (
+            f"🤖 **Bot ID**: `{bot_id}` | Status: **{status} {status_icon}** | "
+            f"Last Updated: `{updated_str}`\n\n"
         )
 
-    await status_msg.edit("✅ Done! All artist track IDs fetched.") 
+    text += (
+        f"\n📦 **Total Bots (active in DB):** {total_active_bots}\n"
+        f"🤖 **Bots with Tasks:** {total_bots_from_tasks}\n"
+        f"🏃‍♂️ **Running Tasks:** {running_tasks_count}\n"
+        f"📤 **Total Sent:** {total_sent}\n"
+        f"⏭️ **Total Skipped:** {total_skipped}\n"
+        f"❌ **Total Failed:** {total_failed}\n"
+    )
+
+    # Add speed & elapsed time if possible
+    if earliest_time and latest_time and latest_time > earliest_time:
+        total_minutes = (latest_time - earliest_time).total_seconds() / 60
+        if total_minutes > 0:
+            per_min_speed = total_sent / total_minutes
+            per_day_est = int(per_min_speed * 1440)
+
+            elapsed = latest_time - earliest_time
+            hours = elapsed.seconds // 3600
+            minutes = (elapsed.seconds % 3600) // 60
+            time_elapsed_str = f"{elapsed.days * 24 + hours} hr {minutes} min"
+
+            text += (
+                f"\n🚀 **Speed**: {per_min_speed:.2f}/min (~{per_day_est:,}/day)\n"
+                f"⏱️ **Time Elapsed:** {time_elapsed_str}\n"
+            )
+
+    return text
+
+
+
+@Client.on_message(filters.command("monitor") & filters.private)
+async def monitor_tasks(client, message):
+    text = await generate_monitor_text()
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("📂 View Track", callback_data="view_track_files_summary"),
+                InlineKeyboardButton("🔄 Refresh", callback_data="refresh_monitor")
+            ]
+        ]
+    )
+
+    await message.reply(text, reply_markup=keyboard)
+
+
+@Client.on_callback_query(filters.regex("view_track_files_summary"))
+async def show_track_files_summary(client, callback_query):
+    assigned_count = await db.track_files.count_documents({"assigned": True})
+    unassigned_count = await db.track_files.count_documents({"assigned": False})
+    total_files = assigned_count + unassigned_count
+
+    pipeline = [
+        {
+            "$group": {
+                "_id": None,
+                "total_tracks": {"$sum": "$total_tracks"},
+                "assigned_tracks": {
+                    "$sum": {
+                        "$cond": [{"$eq": ["$assigned", True]}, "$total_tracks", 0]
+                    }
+                },
+                "unassigned_tracks": {
+                    "$sum": {
+                        "$cond": [{"$eq": ["$assigned", False]}, "$total_tracks", 0]
+                    }
+                }
+            }
+        }
+    ]
+
+    agg_result = await db.track_files.aggregate(pipeline).to_list(length=1)
+    if agg_result:
+        total_tracks = agg_result[0].get("total_tracks", 0)
+        assigned_tracks = agg_result[0].get("assigned_tracks", 0)
+        unassigned_tracks = agg_result[0].get("unassigned_tracks", 0)
+    else:
+        total_tracks = assigned_tracks = unassigned_tracks = 0
+
+    text = (
+        f"📂 Track Files Summary:\n\n"
+        f"📁 Total Files: {total_files}\n"
+        f"✅ Assigned Files: {assigned_count}\n"
+        f"📭 Unassigned Files: {unassigned_count}\n"
+        f"🎼 Total Tracks: {total_tracks}\n"
+        f"📌 Assigned Tracks: {assigned_tracks}\n"
+        f"📤 Unassigned Tracks: {unassigned_tracks}"
+    )
+
+    await callback_query.answer(text, show_alert=True)
+
+
+
+@Client.on_callback_query(filters.regex("refresh_monitor"))
+async def refresh_monitor(client, callback_query):
+    text = await generate_monitor_text()
+    await callback_query.answer("Refreshed ✅", show_alert=False)
+    await callback_query.message.edit_text(text,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("📂 View Track", callback_data="view_track_files_summary"),
+                    InlineKeyboardButton("🔄 Refresh", callback_data="refresh_monitor")
+                ]
+            ]
+        )
+    )
