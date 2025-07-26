@@ -1,12 +1,13 @@
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import aiohttp
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 import re
 import os
 import asyncio
- 
-# Logger setup
+
+# ----------------- Logging Setup -----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -14,24 +15,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ----------------- Spotify Auth -----------------
+SPOTIFY_CLIENT_ID = "c6e8b0da7751415e848a97f309bc057d"
+SPOTIFY_CLIENT_SECRET = "97d40c2c7b7948589df58d838b8e9e68"
+
+sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+    client_id=SPOTIFY_CLIENT_ID,
+    client_secret=SPOTIFY_CLIENT_SECRET
+))
+
+# ----------------- Regex -----------------
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
-
-async def extract_track_ids(playlist_url):
+# ----------------- Extractor -----------------
+async def extract_track_ids_spotify(playlist_id):
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(playlist_url, headers=HEADERS) as resp:
-                text = await resp.text()
-                track_ids = list(set(re.findall(r"spotify:track:([a-zA-Z0-9]+)", text)))
-                logger.info(f"Scraped {len(track_ids)} tracks from: {playlist_url}")
-                return track_ids
+        results = sp.playlist_tracks(playlist_id)
+        tracks = results["items"]
+
+        # Handle pagination (if >100 songs)
+        while results["next"]:
+            results = sp.next(results)
+            tracks.extend(results["items"])
+
+        track_ids = []
+        for item in tracks:
+            track = item["track"]
+            if track:
+                track_ids.append(track["id"])
+
+        logger.info(f"✅ Extracted {len(track_ids)} tracks from playlist {playlist_id}")
+        return track_ids
     except Exception as e:
-        logger.error(f"Error scraping {playlist_url}: {e}")
+        logger.error(f"❌ Error scraping playlist {playlist_id}: {e}")
         return []
 
+# ----------------- Command Handler -----------------
 @Client.on_message(filters.command("extracttracks") & filters.reply)
 async def extract_from_txt(client, message: Message):
     if not message.reply_to_message.document:
@@ -45,21 +64,19 @@ async def extract_from_txt(client, message: Message):
             content = f.read()
 
         playlist_ids = re.findall(SPOTIFY_PLAYLIST_REGEX, content)
-        full_links = [f"https://open.spotify.com/playlist/{pid}" for pid in playlist_ids]
+        total = len(playlist_ids)
+        logger.info(f"📂 Found {total} playlist links to extract.")
+        status = await message.reply(f"🌀 Found {total} playlists. Extracting...")
 
-        total = len(full_links)
-        logger.info(f"Found {total} playlists to process.")
-        status = await message.reply(f"🌀 Found {total} playlists. Starting...")
-
-        for idx, url in enumerate(full_links, start=1):
-            ids = await extract_track_ids(url)
+        for idx, pid in enumerate(playlist_ids, start=1):
+            ids = await extract_track_ids_spotify(pid)
             final_track_ids.extend(ids)
 
-            if idx % 20 == 0 or idx == total:
-                await status.edit(f"🔍 Scraped {idx}/{total} playlists...\nLatest: {url}")
-                logger.info(f"Updated progress message at {idx}/{total}")
+            if idx % 5 == 0 or idx == total:
+                await status.edit(f"🔍 Extracted {idx}/{total} playlists.")
+                logger.info(f"⏳ Progress: {idx}/{total}")
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.5)
 
         unique_ids = list(set(final_track_ids))
         result_file = "all_tracks.txt"
@@ -67,7 +84,7 @@ async def extract_from_txt(client, message: Message):
             f.write("\n".join(unique_ids))
 
         logger.info(f"✅ Total Unique Tracks Extracted: {len(unique_ids)}")
-        await message.reply_document(result_file, caption=f"✅ Extracted {len(unique_ids)} unique tracks.")
+        await message.reply_document(result_file, caption=f"✅ Extracted {len(unique_ids)} unique track IDs.")
         os.remove(result_file)
 
     except Exception as e:
