@@ -1,12 +1,15 @@
 import logging
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.errors import MessageNotModified
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 import re
 import os
 import asyncio
-from playwright.async_api import async_playwright
+import time  # For timestamp
 
-# Logger setup
+# ----------------- Logging Setup -----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -14,68 +17,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ----------------- Spotify Auth -----------------
+SPOTIFY_CLIENT_ID = "8361260e407b41cf830dbaeb47e4065a"
+SPOTIFY_CLIENT_SECRET = "ef93481f760a40358aae44759d47740e"
+
+sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+    client_id=SPOTIFY_CLIENT_ID,
+    client_secret=SPOTIFY_CLIENT_SECRET
+))
+
+# ----------------- Regex -----------------
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 
-import json
-
-async def extract_track_ids_playwright(playlist_url):
+# ----------------- Extractor -----------------
+async def extract_track_ids_spotify(playlist_id):
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(playlist_url, wait_until="networkidle")
-            logger.info("Page loaded: %s", playlist_url)
+        results = sp.playlist_tracks(playlist_id)
+        tracks = results["items"]
 
-            await asyncio.sleep(5)
+        # Handle pagination (if >100 songs)
+        while results["next"]:
+            results = sp.next(results)
+            tracks.extend(results["items"])
 
-            scroll_selector = 'div[role="presentation"] > div > div:nth-child(2)'
-            previous_height = 0
+        track_ids = []
+        for item in tracks:
+            track = item["track"]
+            if track:
+                track_ids.append(track["id"])
 
-            logger.info("Scrolling through playlist to load all tracks...")
-
-            for _ in range(50):
-                current_height = await page.evaluate(f'''
-                    () => {{
-                        const el = document.querySelector("{scroll_selector}");
-                        return el ? el.scrollHeight : 0;
-                    }}
-                ''')
-
-                if current_height == previous_height:
-                    logger.info("Reached end of scroll. Total scroll height: %s", current_height)
-                    break
-
-                previous_height = current_height
-
-                await page.evaluate(f'''
-                    () => {{
-                        const el = document.querySelector("{scroll_selector}");
-                        if (el) el.scrollTo(0, el.scrollHeight);
-                    }}
-                ''')
-
-                await asyncio.sleep(2.5)
-
-            logger.info("Scrolling done. Extracting track links...")
-
-            anchors = await page.query_selector_all('a[href^="/track/"]')
-            track_ids = set()
-
-            for anchor in anchors:
-                href = await anchor.get_attribute("href")
-                if href and "/track/" in href:
-                    track_id = href.split("/track/")[1].split("?")[0]
-                    track_ids.add(track_id)
-
-            await browser.close()
-
-            logger.info("Playwright scraped %d tracks from: %s", len(track_ids), playlist_url)
-            return list(track_ids)
-
+        logger.info(f"✅ Extracted {len(track_ids)} tracks from playlist {playlist_id}")
+        return track_ids
     except Exception as e:
-        logger.error("Playwright error scraping %s: %s", playlist_url, e)
+        logger.error(f"❌ Error scraping playlist {playlist_id}: {e}")
         return []
-        
+
+# ----------------- Command Handler -----------------
 @Client.on_message(filters.command("extracttracks") & filters.reply)
 async def extract_from_txt(client, message: Message):
     if not message.reply_to_message.document:
@@ -89,34 +66,43 @@ async def extract_from_txt(client, message: Message):
             content = f.read()
 
         playlist_ids = re.findall(SPOTIFY_PLAYLIST_REGEX, content)
-        full_links = [f"https://open.spotify.com/playlist/{pid}" for pid in playlist_ids]
+        total = len(playlist_ids)
+        logger.info(f"📂 Found {total} playlist links to extract.")
+        status = await message.reply(f"🌀 Found {total} playlists. Extracting...")
 
-        total = len(full_links)
-        logger.info(f"Found {total} playlists to process.")
-        status = await message.reply(f"🌀 Found {total} playlists. Starting scraping...")
-
-        for idx, url in enumerate(full_links, start=1):
-            ids = await extract_track_ids_playwright(url)
+        for idx, pid in enumerate(playlist_ids, start=1):
+            ids = await extract_track_ids_spotify(pid)
             final_track_ids.extend(ids)
 
             if idx % 5 == 0 or idx == total:
-                await status.edit(f"🔍 Scraped {idx}/{total} playlists...\nLatest: {url}")
-                logger.info(f"Updated progress message at {idx}/{total}")
+                try:
+                    await status.edit(f"🔍 Extracted {idx}/{total} playlists.")
+                except MessageNotModified:
+                    # Ignore if message text is same as before
+                    pass
+                logger.info(f"⏳ Progress: {idx}/{total}")
 
-            await asyncio.sleep(1)  # small delay
+            await asyncio.sleep(0.5)
 
         unique_ids = list(set(final_track_ids))
-        result_file = "all_tracks.txt"
+
+        # Unique filename with timestamp
+        timestamp = int(time.time())
+        result_file = f"all_tracks_{timestamp}.txt"
+
         with open(result_file, "w") as f:
             f.write("\n".join(unique_ids))
 
         logger.info(f"✅ Total Unique Tracks Extracted: {len(unique_ids)}")
-        await message.reply_document(result_file, caption=f"✅ Extracted {len(unique_ids)} unique tracks.")
+        await message.reply_document(result_file, caption=f"✅ Extracted {len(unique_ids)} unique track IDs.")
+        
+        # Remove the result file after sending
         os.remove(result_file)
 
     except Exception as e:
         logger.exception("An error occurred during processing.")
         await message.reply(f"❌ Error: {e}")
     finally:
+        # Remove the downloaded playlist file safely
         if os.path.exists(file_path):
             os.remove(file_path)
