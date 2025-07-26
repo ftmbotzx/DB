@@ -7,7 +7,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 
 # 🔧 Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) 
 
 # 🟢 Spotify credentials
 client_secret = "97d40c2c7b7948589df58d838b8e9e68"
