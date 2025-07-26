@@ -7,17 +7,17 @@ from spotipy.oauth2 import SpotifyClientCredentials
 import re
 import os
 import asyncio
-import time  # For timestamp
+import time
 
-# ----------------- Logging Setup -----------------
+# -------- Logger Setup --------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%H:%M:%S"
 )
 logger = logging.getLogger(__name__)
- 
-# ----------------- Spotify Auth -----------------
+
+# -------- Spotify Credentials --------
 SPOTIFY_CLIENT_ID = "8361260e407b41cf830dbaeb47e4065a"
 SPOTIFY_CLIENT_SECRET = "ef93481f760a40358aae44759d47740e"
 
@@ -26,16 +26,16 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
     client_secret=SPOTIFY_CLIENT_SECRET
 ))
 
-# ----------------- Regex -----------------
+# -------- Regex to extract playlist IDs --------
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 
-# ----------------- Extractor -----------------
+# -------- Extract tracks from one playlist --------
 async def extract_track_ids_spotify(playlist_id):
     try:
         results = sp.playlist_tracks(playlist_id)
         tracks = results["items"]
 
-        # Handle pagination (if >100 songs)
+        # Pagination handling
         while results["next"]:
             results = sp.next(results)
             tracks.extend(results["items"])
@@ -43,7 +43,7 @@ async def extract_track_ids_spotify(playlist_id):
         track_ids = []
         for item in tracks:
             track = item["track"]
-            if track:
+            if track and track.get("id"):
                 track_ids.append(track["id"])
 
         logger.info(f"✅ Extracted {len(track_ids)} tracks from playlist {playlist_id}")
@@ -52,11 +52,17 @@ async def extract_track_ids_spotify(playlist_id):
         logger.error(f"❌ Error scraping playlist {playlist_id}: {e}")
         return []
 
-# ----------------- Command Handler -----------------
+# -------- Command Handler --------
 @Client.on_message(filters.command("extracttracks") & filters.reply)
-async def extract_from_txt(client, message: Message):
+async def extract_from_txt(client: Client, message: Message):
     if not message.reply_to_message.document:
         return await message.reply("⚠️ Reply to a `.txt` file containing Spotify playlist links.")
+
+    # Parse start index from command args, default 0
+    try:
+        start_index = int(message.command[1]) if len(message.command) > 1 else 0
+    except:
+        return await message.reply("⚠️ Invalid start index. Usage: /extracttracks 0")
 
     file_path = await message.reply_to_message.download()
     final_track_ids = []
@@ -67,42 +73,63 @@ async def extract_from_txt(client, message: Message):
 
         playlist_ids = re.findall(SPOTIFY_PLAYLIST_REGEX, content)
         total = len(playlist_ids)
-        logger.info(f"📂 Found {total} playlist links to extract.")
-        status = await message.reply(f"🌀 Found {total} playlists. Extracting...")
 
-        for idx, pid in enumerate(playlist_ids, start=1):
+        if start_index >= total:
+            return await message.reply(f"⚠️ Start index {start_index} is out of range (total {total} playlists).")
+
+        logger.info(f"📂 Found {total} playlist links.")
+        logger.info(f"🎯 Starting extraction from playlist index {start_index + 1}/{total}")
+
+        status = await message.reply(
+            f"🌀 Found {total} playlists.\n➡️ Starting from index {start_index + 1}..."
+        )
+
+        batch_counter = 1
+        batch_start = start_index + 1  # human-readable playlist number (1-based)
+        batch_tracks = []
+
+        for idx in range(start_index, total):
+            pid = playlist_ids[idx]
+            logger.info(f"Processing playlist {idx + 1}/{total}")
+
             ids = await extract_track_ids_spotify(pid)
+            batch_tracks.extend(ids)
             final_track_ids.extend(ids)
 
-            if idx % 5 == 0 or idx == total:
+            # Every 500 playlists or at the end, send batch file
+            if (idx + 1 - start_index) % 500 == 0 or (idx + 1) == total:
+                batch_end = idx + 1
+                unique_tracks = list(set(batch_tracks))
+                timestamp = int(time.time())
+                filename = f"tracks_batch_{batch_start}_to_{batch_end}_{timestamp}.txt"
+
+                with open(filename, "w") as f:
+                    f.write("\n".join(unique_tracks))
+
+                await message.reply_document(filename, caption=f"📦 Batch {batch_counter} sent: playlists {batch_start} to {batch_end}")
+
+                logger.info(f"Batch {batch_counter} sent: playlists {batch_start} to {batch_end}")
+
+                os.remove(filename)
+                batch_counter += 1
+                batch_start = batch_end + 1
+                batch_tracks.clear()
+
+            # Edit progress message every 5 playlists
+            if (idx + 1) % 5 == 0 or (idx + 1) == total:
                 try:
-                    await status.edit(f"🔍 Extracted {idx}/{total} playlists.")
+                    await status.edit(f"🔍 Extracted {idx + 1}/{total} playlists.")
                 except MessageNotModified:
-                    # Ignore if message text is same as before
                     pass
-                logger.info(f"⏳ Progress: {idx}/{total}")
 
             await asyncio.sleep(0.5)
 
-        unique_ids = list(set(final_track_ids))
-
-        # Unique filename with timestamp
-        timestamp = int(time.time())
-        result_file = f"all_tracks_{timestamp}.txt"
-
-        with open(result_file, "w") as f:
-            f.write("\n".join(unique_ids))
-
-        logger.info(f"✅ Total Unique Tracks Extracted: {len(unique_ids)}")
-        await message.reply_document(result_file, caption=f"✅ Extracted {len(unique_ids)} unique track IDs.")
-        
-        # Remove the result file after sending
-        os.remove(result_file)
+        await status.edit(f"✅ Extraction complete! Total playlists processed: {total - start_index}. Total unique tracks: {len(set(final_track_ids))}")
 
     except Exception as e:
-        logger.exception("An error occurred during processing.")
+        logger.exception("An error occurred during extraction.")
         await message.reply(f"❌ Error: {e}")
+
     finally:
-        # Remove the downloaded playlist file safely
         if os.path.exists(file_path):
             os.remove(file_path)
