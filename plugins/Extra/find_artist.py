@@ -1,16 +1,14 @@
-# aritst.py
-
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-
 import logging
+import time
+import os
 
 # Logger setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 CLIENT_ID = "c6e8b0da7751415e848a97f309bc057d"
 CLIENT_SECRET = "97d40c2c7b7948589df58d838b8e9e68"
@@ -52,9 +50,12 @@ async def get_all_indian_artists(client: Client, message: Message):
         for idx, (name, url) in enumerate(sorted_artists, 1):
             text += f"{idx}. [{name}]({url})\n"
 
+        # Unique filename with timestamp
+        timestamp = int(time.time())
+        file_name = f"indian_artists_list_{timestamp}.txt"
+
         # Save raw text file
         plain_text = "\n".join([f"{idx}. {name} - {url}" for idx, (name, url) in enumerate(sorted_artists, 1)])
-        file_name = "indian_artists_list.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             f.write(plain_text)
 
@@ -63,8 +64,10 @@ async def get_all_indian_artists(client: Client, message: Message):
             caption=f"✅ Found `{total_count}` unique Indian artists for queries: {', '.join(queries)}."
         )
 
+        # Remove file after sending
+        if os.path.exists(file_name):
+            os.remove(file_name)
+
     except Exception as e:
         logger.exception("Error in get_all_indian_artists")
         await message.reply(f"❌ Error: `{e}`")
-
-
