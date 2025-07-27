@@ -20,5 +20,6 @@ RUN pip install spotipy playwright yt-dlp spotdl
 
 # Install Playwright browsers
 RUN python -m playwright install
+RUN pip install git+https://github.com/AliAkhtari78/SpotifyScraper.git
 
 CMD ["python", "bot.py"]
