@@ -1,232 +1,48 @@
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from collections import defaultdict
-from datetime import datetime, timedelta
-import pytz
+from pyrogram.types import Message
+import os
+from github import Github
 
+# GitHub setup
+GITHUB_TOKEN = "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"
+GITHUB_REPO = "Anshvachhani998/file-host"
+g = Github(GITHUB_TOKEN)
+repo = g.get_repo(GITHUB_REPO)
 
-from database.db import db
+# Upload function
+def upload_file_to_github(filepath, commit_message):
+    folder = "tracks"
+    filename_only = os.path.basename(filepath)
+    filename = f"{folder}/{filename_only}"
 
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
 
-from datetime import datetime, timedelta, timezone
-import re
+    try:
+        file = repo.get_contents(filename)
+        repo.update_file(file.path, commit_message, content, file.sha)
+    except Exception as e:
+        try:
+            repo.create_file(filename, commit_message, content)
+        except Exception as ex:
+            raise Exception(f"❌ GitHub upload failed: {ex}")
 
-def parse_datetime_with_tz(datetime_str):
-    match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([+-])(\d{2})(\d{2})", datetime_str)
-    if match:
-        dt_part, sign, hours_offset, minutes_offset = match.groups()
-        dt = datetime.strptime(dt_part, "%Y-%m-%d %H:%M:%S")
-        offset = timedelta(hours=int(hours_offset), minutes=int(minutes_offset))
-        if sign == '-':
-            offset = -offset
-        tz = timezone(offset)
-        return dt.replace(tzinfo=tz)
-    return None
+# Pyrogram command handler
+@Client.on_message(filters.command("add") & filters.reply)
+async def add_txt_file_to_github(client, message: Message):
+    replied = message.reply_to_message
 
+    if not replied.document or not replied.document.file_name.endswith(".txt"):
+        return await message.reply("❌ Please reply to a `.txt` file.")
 
-async def generate_monitor_text():
-    tasks = await db.tasks_collection.find().to_list(length=1000)
-    bots = await db.bots.find({"active": True}).to_list(None)
+    status = await message.reply("📥 Downloading file...")
+    downloaded = await replied.download()
 
-    if not tasks and not bots:
-        return "📭 No bots or tasks found yet."
+    try:
+        commit_message = f"Add {os.path.basename(downloaded)}"
+        upload_file_to_github(downloaded, commit_message)
+        await status.edit(f"✅ File uploaded to GitHub: `tracks/{os.path.basename(downloaded)}`")
+    except Exception as e:
+        await status.edit(str(e))
 
-    ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist)
-
-    text = "📊 **Current Task Status**\n\n"
-
-    bot_statuses = defaultdict(lambda: {"status": None, "sent": 0, "skipped": 0, "failed": 0, "updated_at": None})
-    total_sent = total_skipped = total_failed = 0
-
-    start_times = []
-    end_times = []
-
-    for task in tasks:
-        bot_id = task.get("bot_name", "N/A")
-        status = task.get("status", "N/A").capitalize()
-        sent = task.get("sent_count", 0)
-        skipped = task.get("skipped_count", 0)
-        failed = task.get("failed_count", 0)
-
-        # Parse assigned_at
-        assigned = task.get("assigned_at")
-        assigned_dt = None
-        if assigned:
-            if isinstance(assigned, str):
-                assigned_dt = parse_datetime_with_tz(assigned)
-            else:
-                assigned_dt = assigned
-            if assigned_dt:
-                if assigned_dt.tzinfo is None:
-                    assigned_dt = ist.localize(assigned_dt)
-                else:
-                    assigned_dt = assigned_dt.astimezone(ist)
-                start_times.append(assigned_dt)
-
-        # Parse updated_at
-        updated = task.get("updated_at")
-        updated_dt = None
-        if updated:
-            if isinstance(updated, str):
-                updated_dt = parse_datetime_with_tz(updated)
-            else:
-                updated_dt = updated
-            if updated_dt:
-                if updated_dt.tzinfo is None:
-                    updated_dt = ist.localize(updated_dt)
-                else:
-                    updated_dt = updated_dt.astimezone(ist)
-                end_times.append(updated_dt)
-
-        bot_statuses[bot_id]["status"] = status
-        bot_statuses[bot_id]["sent"] = sent
-        bot_statuses[bot_id]["skipped"] = skipped
-        bot_statuses[bot_id]["failed"] = failed
-        bot_statuses[bot_id]["updated_at"] = updated_dt
-
-        total_sent += sent
-        total_skipped += skipped
-        total_failed += failed
-
-    total_bots_from_tasks = len(bot_statuses)
-    total_active_bots = len(bots)
-    running_tasks_count = 0
-
-    for bot_id, data in bot_statuses.items():
-        status = data['status']
-        updated_at = data['updated_at']
-
-        too_old = False
-        if updated_at:
-            diff = now - updated_at
-            if diff > timedelta(minutes=30):
-                too_old = True
-
-        if status and status.lower() == "running" and not too_old:
-            status_icon = "✅"
-            running_tasks_count += 1
-        else:
-            status_icon = "❌"
-
-        updated_str = updated_at.strftime("%d %b %Y %I:%M %p") if updated_at else "N/A"
-
-        text += (
-            f"🤖 **Bot ID**: `{bot_id}` | Status: **{status} {status_icon}** | "
-            f"Last Updated: `{updated_str}`\n\n"
-        )
-
-    text += (
-        f"\n📦 **Total Bots (active in DB):** {total_active_bots}\n"
-        f"🤖 **Bots with Tasks:** {total_bots_from_tasks}\n"
-        f"🏃‍♂️ **Running Tasks:** {running_tasks_count}\n"
-        f"📤 **Total Sent:** {total_sent}\n"
-        f"⏭️ **Total Skipped:** {total_skipped}\n"
-        f"❌ **Total Failed:** {total_failed}\n"
-    )
-
-    # Speed & Elapsed Time using start & end times
-    if start_times and end_times:
-        earliest_time = min(start_times)
-        latest_time = max(end_times)
-        if latest_time > earliest_time:
-            total_minutes = (latest_time - earliest_time).total_seconds() / 60
-            if total_minutes >= 1:
-                per_min_speed = total_sent / total_minutes
-                per_day_est = int(per_min_speed * 1440)
-
-                elapsed = latest_time - earliest_time
-                hours = elapsed.seconds // 3600
-                minutes = (elapsed.seconds % 3600) // 60
-                time_elapsed_str = f"{elapsed.days * 24 + hours} hr {minutes} min"
-
-                text += (
-                    f"\n🚀 **Speed**: {per_min_speed:.2f}/min (~{per_day_est:,}/day)\n"
-                    f"⏱️ **Time Elapsed:** {time_elapsed_str}\n"
-                )
-            else:
-                text += "\n⚠️ Not enough time has passed to calculate speed.\n"
-        else:
-            text += "\n⚠️ Speed calculation skipped due to insufficient time gap.\n"
-    else:
-        text += "\n⚠️ Missing assigned/updated timestamps for speed calculation.\n"
-
-    return text
-
-@Client.on_message(filters.command("monitor") & filters.private)
-async def monitor_tasks(client, message):
-    text = await generate_monitor_text()
-
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("📂 View Track", callback_data="view_track_files_summary"),
-                InlineKeyboardButton("🔄 Refresh", callback_data="refresh_monitor")
-            ]
-        ]
-    )
-
-    await message.reply(text, reply_markup=keyboard)
-
-
-@Client.on_callback_query(filters.regex("view_track_files_summary"))
-async def show_track_files_summary(client, callback_query):
-    assigned_count = await db.track_files.count_documents({"assigned": True})
-    unassigned_count = await db.track_files.count_documents({"assigned": False})
-    total_files = assigned_count + unassigned_count
-
-    pipeline = [
-        {
-            "$group": {
-                "_id": None,
-                "total_tracks": {"$sum": "$total_tracks"},
-                "assigned_tracks": {
-                    "$sum": {
-                        "$cond": [{"$eq": ["$assigned", True]}, "$total_tracks", 0]
-                    }
-                },
-                "unassigned_tracks": {
-                    "$sum": {
-                        "$cond": [{"$eq": ["$assigned", False]}, "$total_tracks", 0]
-                    }
-                }
-            }
-        }
-    ]
-
-    agg_result = await db.track_files.aggregate(pipeline).to_list(length=1)
-    if agg_result:
-        total_tracks = agg_result[0].get("total_tracks", 0)
-        assigned_tracks = agg_result[0].get("assigned_tracks", 0)
-        unassigned_tracks = agg_result[0].get("unassigned_tracks", 0)
-    else:
-        total_tracks = assigned_tracks = unassigned_tracks = 0
-
-    text = (
-        f"📂 Track Files Summary:\n\n"
-        f"📁 Total Files: {total_files}\n"
-        f"✅ Assigned Files: {assigned_count}\n"
-        f"📭 Unassigned Files: {unassigned_count}\n"
-        f"🎼 Total Tracks: {total_tracks}\n"
-        f"📌 Assigned Tracks: {assigned_tracks}\n"
-        f"📤 Unassigned Tracks: {unassigned_tracks}"
-    )
-
-    await callback_query.answer(text, show_alert=True)
-
-
-
-@Client.on_callback_query(filters.regex("refresh_monitor"))
-async def refresh_monitor(client, callback_query):
-    text = await generate_monitor_text()
-    await callback_query.answer("Refreshed ✅", show_alert=False)
-    await callback_query.message.edit_text(text,
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("📂 View Track", callback_data="view_track_files_summary"),
-                    InlineKeyboardButton("🔄 Refresh", callback_data="refresh_monitor")
-                ]
-            ]
-        )
-    )
+    os.remove(downloaded)
