@@ -31,17 +31,7 @@ async def get_playlist(client, message):
             f"👤 Owner: {owner}\n"
             f"🎶 Total Tracks: {track_count}\n"
             f"⭐ Followers: {followers_text}\n\n"
-            "Tracks:\n"
         )
-
-        for track in playlist["tracks"]:
-            track_name = track.get("name", "Unknown")
-            artist_name = (
-                track.get("artists", [{}])[0].get("name", "Unknown")
-                if track.get("artists")
-                else "Unknown"
-            )
-            text += f"  - {track_name} by {artist_name}\n"
 
         # Reply with playlist info
         await message.reply(text)
