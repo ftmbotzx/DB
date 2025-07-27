@@ -4,7 +4,7 @@ import os
 from github import Github
 
 # GitHub setup
-GITHUB_TOKEN = "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"
+GITHUB_TOKEN = "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"
 GITHUB_REPO = "Anshvachhani998/file-host"
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(GITHUB_REPO)
