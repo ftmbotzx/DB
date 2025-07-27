@@ -19,13 +19,18 @@ async def get_playlist(client, message):
         name = playlist.get("name", "Unknown")
         owner = playlist.get("owner", {}).get("display_name", playlist.get("owner", {}).get("id", "Unknown"))
         track_count = playlist.get("track_count", 0)
+
         followers = playlist.get("followers", {}).get("total", "N/A")
+        if isinstance(followers, int):
+            followers_text = f"{followers:,}"
+        else:
+            followers_text = str(followers)
 
         text = (
             f"🎵 Playlist: {name}\n"
             f"👤 Owner: {owner}\n"
             f"🎶 Total Tracks: {track_count}\n"
-            f"⭐ Followers: {followers:,}\n\n"
+            f"⭐ Followers: {followers_text}\n\n"
             "Tracks:\n"
         )
 
