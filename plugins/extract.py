@@ -215,6 +215,16 @@ import asyncio
 import re
 from pyrogram import Client, filters
 from spotipy import SpotifyException
+import json
+from .spotify_client_manager import SpotifyClientManager
+
+# Load all clients from clients.json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
+
+# Initialize the client manager with all available clients
+client_manager = SpotifyClientManager(clients)
 
 
 
@@ -234,6 +244,12 @@ async def safe_spotify_call(func, *args, **kwargs):
                 await asyncio.sleep(retry_after + 1)
             else:
                 raise
+
+async def make_spotify_api_call(endpoint, params=None):
+    """Helper function to make Spotify API calls using the client manager"""
+    base_url = "https://api.spotify.com/v1"
+    url = f"{base_url}/{endpoint}"
+    return await client_manager.make_request(url, params)
                
 PROGRESS_FILE = "progress.json"
 

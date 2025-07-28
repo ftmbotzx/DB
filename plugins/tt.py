@@ -6,11 +6,13 @@ import aiohttp
 import base64
 import asyncio
 
-client_credentials = [
-    ("5561376fd0234838863a8c3a6cbb0865", "fa12e995f56c48a28e28fb056e041d18"),
-    ("a8c78174e7524e109d669ee67bbad3f2", "3074289c88ac4071bef5c11ca210a8e5"),
+# Load all clients from clients.json
+import json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
 
-]
+client_credentials = [(client["client_id"], client["client_secret"]) for client in clients]
 
 async def check_credentials(session, client_id, client_secret):
     auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()

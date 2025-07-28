@@ -1,10 +1,10 @@
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+import json
+from .spotify_client_manager import SpotifyClientManager
 
-SPOTIFY_CLIENT_ID = "c6e8b0da7751415e848a97f309bc057d"
-SPOTIFY_CLIENT_SECRET = "97d40c2c7b7948589df58d838b8e9e68"
+# Load all clients from clients.json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
 
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET
-))
+# Initialize the client manager with all available clients
+client_manager = SpotifyClientManager(clients)

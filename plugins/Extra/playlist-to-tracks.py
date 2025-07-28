@@ -17,14 +17,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# -------- Spotify Credentials --------
-SPOTIFY_CLIENT_ID = "5a7e9f41e1124e839e39a1b5ad71417a"
-SPOTIFY_CLIENT_SECRET = "463e9c5ddf4e4b8d8a08eb596e81fce5"
+# -------- Spotify Client Manager --------
+import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from spotify_client_manager import SpotifyClientManager
 
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET
-))
+# Load all clients from clients.json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
+
+# Initialize the client manager with all available clients
+client_manager = SpotifyClientManager(clients)
 
 # -------- Regex to extract playlist IDs --------
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
@@ -32,19 +38,31 @@ SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 # -------- Extract tracks from one playlist --------
 async def extract_track_ids_spotify(playlist_id):
     try:
-        results = sp.playlist_tracks(playlist_id)
-        tracks = results["items"]
-
-        # Pagination handling
-        while results["next"]:
-            results = sp.next(results)
-            tracks.extend(results["items"])
-
         track_ids = []
-        for item in tracks:
-            track = item["track"]
-            if track and track.get("id"):
-                track_ids.append(track["id"])
+        offset = 0
+        limit = 50
+        
+        while True:
+            endpoint = f"playlists/{playlist_id}/tracks"
+            params = {"limit": limit, "offset": offset}
+            response = await client_manager.make_request(f"https://api.spotify.com/v1/{endpoint}", params)
+            
+            if not response or "items" not in response:
+                break
+                
+            tracks = response["items"]
+            
+            for item in tracks:
+                track = item.get("track")
+                if track and track.get("id"):
+                    track_ids.append(track["id"])
+            
+            # Check if there are more tracks to fetch
+            if len(tracks) < limit or not response.get("next"):
+                break
+                
+            offset += limit
+            await asyncio.sleep(0.1)  # Small delay between requests
 
         logger.info(f"✅ Extracted {len(track_ids)} tracks from playlist {playlist_id}")
         return track_ids
