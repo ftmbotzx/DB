@@ -22,8 +22,6 @@ SPOTIFY_CLIENT_SECRET = "97d40c2c7b7948589df58d838b8e9e68"
 auth_manager = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
 sp = spotipy.Spotify(auth_manager=auth_manager)
 
-
-
 def extract_user_id(spotify_url: str) -> str:
     import re
     match = re.search(r"open\.spotify\.com/user/([a-zA-Z0-9]+)", spotify_url)
@@ -35,7 +33,7 @@ def extract_user_id(spotify_url: str) -> str:
 async def process_user_file(client: Client, message: Message):
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".txt"):
-        await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.")
+        await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.", parse_mode=None)
         return
 
     file_path = await client.download_media(doc)
@@ -45,40 +43,40 @@ async def process_user_file(client: Client, message: Message):
 
     total_users = len(lines)
     if total_users == 0:
-        await message.reply("⚠️ The file is empty or has no valid lines.")
+        await message.reply("⚠️ The file is empty or has no valid lines.", parse_mode=None)
         return
 
-    status_msg = await message.reply(f"⏳ Starting to process {total_users} users from the file...")
+    status_msg = await message.reply(f"⏳ Starting to process {total_users} users from the file...", parse_mode=None)
 
     global_total_tracks = 0
-    all_users_track_ids = []  # <-- New list to collect all users' tracks
+    all_users_track_ids = []
 
     for user_index, line in enumerate(lines, start=1):
         if "-" not in line:
-            await message.reply(f"⚠️ Skipping invalid format line: {line}. Expected format: user - spotify_url")
+            await message.reply(f"⚠️ Skipping invalid format line: {line}. Expected format: user - spotify_url", parse_mode=None)
             continue
 
         user_name, url = map(str.strip, line.split("-", 1))
         user_id = extract_user_id(url)
 
         if not user_id:
-            await message.reply(f"⚠️ Invalid Spotify URL for user {user_name}: {url}")
+            await message.reply(f"⚠️ Invalid Spotify URL for user {user_name}: {url}", parse_mode=None)
             continue
 
         try:
             await status_msg.edit(
-                f"🔍 [{user_index}/{total_users}] Fetching playlists for user: **{user_name}** ({user_id})..."
+                f"🔍 [{user_index}/{total_users}] Fetching playlists for user: {user_name} ({user_id})...",
+                parse_mode=None
             )
 
             playlists = sp.user_playlists(user_id)
             if not playlists['items']:
-                await status_msg.edit(f"⚠️ No public playlists found for user **{user_name}**.")
+                await status_msg.edit(f"⚠️ No public playlists found for user {user_name}.", parse_mode=None)
                 continue
 
             total_playlists = 0
             total_tracks_user = 0
             total_playlists_count = playlists.get("total") or None
-
             user_track_ids = []
 
             while playlists:
@@ -109,7 +107,8 @@ async def process_user_file(client: Client, message: Message):
                         f"📀 Playlists processed for this user: {total_playlists} / {total_playlists_count or '?'}\n"
                         f"🎵 Total tracks for this user: {total_tracks_user}\n\n"
                         f"👥 Total users processed: {user_index} / {total_users}\n"
-                        f"🎧 Total tracks collected from ALL users: {global_total_tracks}"
+                        f"🎧 Total tracks collected from ALL users: {global_total_tracks}",
+                        parse_mode=None
                     )
                     await asyncio.sleep(1)
 
@@ -119,20 +118,20 @@ async def process_user_file(client: Client, message: Message):
                     playlists = None
 
             unique_user_tracks = list(set(user_track_ids))
-            all_users_track_ids.extend(unique_user_tracks)  # add user's unique tracks to global list
+            all_users_track_ids.extend(unique_user_tracks)
 
             await status_msg.edit(
-                f"✅ Completed [{user_index}/{total_users}]: **{user_name}**\n"
+                f"✅ Completed [{user_index}/{total_users}]: {user_name}\n"
                 f"📀 Total playlists: {total_playlists}\n"
                 f"🎵 Unique tracks: {len(unique_user_tracks)}\n"
-                f"🎧 Total tracks collected from ALL users: {global_total_tracks}"
+                f"🎧 Total tracks collected from ALL users: {global_total_tracks}",
+                parse_mode=None
             )
 
         except Exception as e:
-            await message.reply(f"❌ Error fetching tracks for **{user_name}**: {e}")
+            await message.reply(f"❌ Error fetching tracks for {user_name}: {e}", parse_mode=None)
             logger.error(f"Error fetching tracks for user {user_id}: {e}")
 
-    # After processing all users, write all unique tracks to one file
     all_unique_tracks = list(set(all_users_track_ids))
     timestamp = int(time.time())
     file_name = f"all_users_tracks_{timestamp}.txt"
@@ -149,4 +148,4 @@ async def process_user_file(client: Client, message: Message):
     os.remove(file_name)
     os.remove(file_path)
 
-    await status_msg.edit("🎉 All users processed. Check your chat for the combined tracks file!")
+    await status_msg.edit("🎉 All users processed. Check your chat for the combined tracks file!", parse_mode=None)
