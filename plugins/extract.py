@@ -130,7 +130,7 @@ async def user_tracks_split(client, message):
 @Client.on_message(filters.command("user"))
 async def usernn_count(client, message):
     if len(message.command) < 2:
-        await message.reply("❗ Usage: `/usercount <spotify_user_link>`")
+        await message.reply("❗ Usage: hlo")
         return
 
     user_url = message.command[1]
