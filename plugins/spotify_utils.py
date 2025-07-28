@@ -4,6 +4,7 @@ import asyncio
 import logging
 from .spotify_client_manager import SpotifyClientManager
 from .ip_manager import IPManager
+from .proxy_manager import ProxyManager
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ with open("clients.json", "r") as f:
 # Initialize managers
 client_manager = SpotifyClientManager(clients)
 ip_manager = IPManager()
+proxy_manager = ProxyManager()
 
 class SpotifyAPIHelper:
     def __init__(self):

@@ -31,17 +31,40 @@ class SpotifyClientManager:
     async def _discover_available_ips(self):
         """Discover available network interfaces and IPs"""
         try:
-            # Get available network interfaces
-            result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, text=True)
+            import socket
+            import netifaces
+            
             interfaces = []
             
-            for line in result.stdout.split('\n'):
-                if 'inet ' in line and '127.0.0.1' not in line:
-                    ip = line.split('inet ')[1].split('/')[0].strip()
-                    interfaces.append(ip)
+            # Method 1: Use netifaces if available
+            try:
+                for interface in netifaces.interfaces():
+                    if interface in ['lo', 'docker0'] or interface.startswith('veth'):
+                        continue
+                    
+                    addrs = netifaces.ifaddresses(interface)
+                    if netifaces.AF_INET in addrs:
+                        for addr_info in addrs[netifaces.AF_INET]:
+                            ip = addr_info.get('addr')
+                            if ip and not ip.startswith('127.'):
+                                interfaces.append(ip)
+            except ImportError:
+                logger.warning("netifaces not available, using socket method")
+                
+                # Method 2: Use socket
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    if local_ip and not local_ip.startswith('127.'):
+                        interfaces.append(local_ip)
+                
+                # Try hostname method too
+                hostname_ip = socket.gethostbyname(socket.gethostname())
+                if hostname_ip and not hostname_ip.startswith('127.') and hostname_ip not in interfaces:
+                    interfaces.append(hostname_ip)
             
             if interfaces:
-                self.available_ips = interfaces
+                self.available_ips = list(set(interfaces))  # Remove duplicates
                 logger.info(f"Discovered {len(self.available_ips)} available IPs: {self.available_ips}")
             else:
                 self.available_ips = ['0.0.0.0']  # Fallback

@@ -21,3 +21,4 @@ PyGithub
 aiohttp
 spotipy
 spotipy
+netifaces
