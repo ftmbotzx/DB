@@ -1,21 +1,26 @@
+
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
 import logging
 import time
 import os
+import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from spotify_client_manager import SpotifyClientManager
 
 # Logger setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-CLIENT_ID = "c6e8b0da7751415e848a97f309bc057d"
-CLIENT_SECRET = "97d40c2c7b7948589df58d838b8e9e68"
+# Load all clients from clients.json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
 
-auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
-sp = spotipy.Spotify(auth_manager=auth_manager)
-
+# Initialize the client manager with all available clients
+client_manager = SpotifyClientManager(clients)
 
 @Client.on_message(filters.command("allartists"))
 async def get_all_indian_artists(client: Client, message: Message):
@@ -38,10 +43,18 @@ async def get_all_indian_artists(client: Client, message: Message):
         artists_dict = {}
 
         for query in queries:
-            results = sp.search(q=query, type='track', limit=50, market='IN')
-            for item in results['tracks']['items']:
-                for artist in item['artists']:
-                    artists_dict[artist['name']] = f"https://open.spotify.com/artist/{artist['id']}"
+            params = {
+                "q": query,
+                "type": "track",
+                "limit": 50,
+                "market": "IN"
+            }
+            results = await client_manager.make_request("https://api.spotify.com/v1/search", params)
+            
+            if results and "tracks" in results:
+                for item in results['tracks']['items']:
+                    for artist in item['artists']:
+                        artists_dict[artist['name']] = f"https://open.spotify.com/artist/{artist['id']}"
 
         sorted_artists = sorted(artists_dict.items())
         total_count = len(sorted_artists)

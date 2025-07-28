@@ -4,8 +4,7 @@ import logging
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+# Removed spotipy imports - using client manager instead
 
 # -------- Logger Setup --------
 logging.basicConfig(
@@ -99,20 +98,30 @@ async def process_user_file(client: Client, message: Message):
                     total_playlists += 1
                     pid = playlist['id']
                     pname = playlist['name']
-                    tracks = sp.playlist_tracks(pid)
+                    # Get playlist tracks using client manager
+                    offset = 0
                     playlist_tracks_count = 0
-
-                    while tracks:
-                        for item in tracks['items']:
-                            track = item['track']
-                            if track:
+                    
+                    while True:
+                        tracks_response = await client_manager.make_request(
+                            f"https://api.spotify.com/v1/playlists/{pid}/tracks",
+                            {"limit": 50, "offset": offset}
+                        )
+                        
+                        if not tracks_response or not tracks_response.get('items'):
+                            break
+                            
+                        for item in tracks_response['items']:
+                            track = item.get('track')
+                            if track and track.get('id'):
                                 user_track_ids.append(track['id'])
                                 total_tracks_user += 1
                                 playlist_tracks_count += 1
-                        if tracks['next']:
-                            tracks = sp.next(tracks)
-                        else:
-                            tracks = None
+                        
+                        if len(tracks_response['items']) < 50 or not tracks_response.get('next'):
+                            break
+                            
+                        offset += 50
 
                     global_total_tracks += playlist_tracks_count
 
@@ -126,8 +135,15 @@ async def process_user_file(client: Client, message: Message):
                     )
                     await asyncio.sleep(1)
 
-                if playlists['next']:
-                    playlists = sp.next(playlists)
+                # Check for next page of playlists
+                if playlists.get('next'):
+                    # Extract offset from next URL or increment manually
+                    offset = playlists.get('offset', 0) + playlists.get('limit', 50)
+                    playlists_response = await client_manager.make_request(
+                        f"https://api.spotify.com/v1/users/{user_id}/playlists",
+                        {"limit": 50, "offset": offset}
+                    )
+                    playlists = playlists_response if playlists_response else None
                 else:
                     playlists = None
 

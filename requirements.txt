@@ -19,3 +19,5 @@ umongo==3.0.1
 playwright
 PyGithub
 aiohttp
+spotipy
+spotipy

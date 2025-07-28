@@ -1,9 +1,13 @@
+
 import time
 import os
 import asyncio
 import logging
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from spotify_client_manager import SpotifyClientManager
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
@@ -11,11 +15,13 @@ from pyrogram.types import Message
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__) 
 
-# 🟢 Spotify credentials
-client_secret = "97d40c2c7b7948589df58d838b8e9e68"
-client_id = "c6e8b0da7751415e848a97f309bc057d"
-auth_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
-sp = spotipy.Spotify(auth_manager=auth_manager)
+# Load all clients from clients.json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
+
+# Initialize the client manager with all available clients
+client_manager = SpotifyClientManager(clients)
 
 DEFAULT_QUERIES = [
     "bollywood hits", "top hindi songs", "indian classical", "desi hip hop", "punjabi hits",
@@ -47,7 +53,13 @@ async def get_custom_playlists(client: Client, message: Message):
         for query in queries:
             for offset in range(0, 500, 50):
                 try:
-                    results = sp.search(q=query, type="playlist", limit=50, offset=offset)
+                    params = {
+                        "q": query,
+                        "type": "playlist",
+                        "limit": 50,
+                        "offset": offset
+                    }
+                    results = await client_manager.make_request("https://api.spotify.com/v1/search", params)
                     await asyncio.sleep(0.5)
                     logger.info(f"Queried '{query}' at offset {offset}")
                 except Exception as err:
