@@ -78,7 +78,12 @@ async def process_user_file(client: Client, message: Message):
                 f"🔍 [{user_index}/{total_users}] Fetching playlists for user: **{user_name}** ({user_id})..."
             )
 
-            playlists = sp.user_playlists(user_id)
+            playlists_response = await client_manager.make_request(f"https://api.spotify.com/v1/users/{user_id}/playlists", {"limit": 50})
+            if not playlists_response:
+                await status_msg.edit(f"⚠️ Failed to fetch playlists for user **{user_name}**.")
+                continue
+            
+            playlists = playlists_response
             if not playlists['items']:
                 await status_msg.edit(f"⚠️ No public playlists found for user **{user_name}**.")
                 continue

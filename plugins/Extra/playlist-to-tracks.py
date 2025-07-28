@@ -62,7 +62,11 @@ async def extract_track_ids_spotify(playlist_id):
                 break
                 
             offset += limit
-            await asyncio.sleep(0.1)  # Small delay between requests
+            
+            # Log client info every 500 tracks
+            if len(track_ids) % 500 == 0:
+                info = client_manager.get_current_client_info()
+                logger.info(f"Progress: {len(track_ids)} tracks, using client {info['client_index']+1}/{info['total_clients']}, IP {info['current_ip']}")
 
         logger.info(f"✅ Extracted {len(track_ids)} tracks from playlist {playlist_id}")
         return track_ids

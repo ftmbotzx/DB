@@ -217,6 +217,7 @@ from pyrogram import Client, filters
 from spotipy import SpotifyException
 import json
 from .spotify_client_manager import SpotifyClientManager
+from .ip_manager import IPManager
 
 # Load all clients from clients.json
 with open("clients.json", "r") as f:
@@ -225,6 +226,7 @@ with open("clients.json", "r") as f:
 
 # Initialize the client manager with all available clients
 client_manager = SpotifyClientManager(clients)
+ip_manager = IPManager()
 
 
 
@@ -233,23 +235,44 @@ def extract_artist_id(artist_url):
     return match.group(1) if match else None
 
 
-async def safe_spotify_call(func, *args, **kwargs):
-    while True:
-        try:
-            return func(*args, **kwargs)
-        except SpotifyException as e:
-            if e.http_status == 429:
-                retry_after = int(e.headers.get("Retry-After", 5))
-                logger.warning(f"🔁 429 Error. Retrying after {retry_after}s...")
-                await asyncio.sleep(retry_after + 1)
-            else:
-                raise
-
 async def make_spotify_api_call(endpoint, params=None):
     """Helper function to make Spotify API calls using the client manager"""
     base_url = "https://api.spotify.com/v1"
     url = f"{base_url}/{endpoint}"
     return await client_manager.make_request(url, params)
+
+async def get_user_playlists(user_id):
+    """Get user playlists using client manager"""
+    return await make_spotify_api_call(f"users/{user_id}/playlists", {"limit": 50})
+
+async def get_playlist_tracks(playlist_id, offset=0):
+    """Get playlist tracks using client manager"""
+    return await make_spotify_api_call(f"playlists/{playlist_id}/tracks", {"limit": 50, "offset": offset})
+
+async def get_artist_albums(artist_id, offset=0):
+    """Get artist albums using client manager"""
+    return await make_spotify_api_call(f"artists/{artist_id}/albums", {
+        "include_groups": "album,single,appears_on,compilation",
+        "limit": 50,
+        "offset": offset
+    })
+
+async def get_album_tracks(album_id):
+    """Get album tracks using client manager"""
+    return await make_spotify_api_call(f"albums/{album_id}/tracks")
+
+async def get_artist_info(artist_id):
+    """Get artist information using client manager"""
+    return await make_spotify_api_call(f"artists/{artist_id}")
+
+async def search_spotify(query, search_type="track", limit=50, offset=0):
+    """Search Spotify using client manager"""
+    return await make_spotify_api_call("search", {
+        "q": query,
+        "type": search_type,
+        "limit": limit,
+        "offset": offset
+    })
                
 PROGRESS_FILE = "progress.json"
 

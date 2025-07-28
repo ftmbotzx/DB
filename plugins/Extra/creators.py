@@ -17,14 +17,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Spotify API credentials
-SPOTIFY_CLIENT_ID = "c6e8b0da7751415e848a97f309bc057d"
-SPOTIFY_CLIENT_SECRET = "97d40c2c7b7948589df58d838b8e9e68"
+# Spotify Client Manager
+import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from spotify_client_manager import SpotifyClientManager
 
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET
-))
+# Load all clients from clients.json
+with open("clients.json", "r") as f:
+    clients_data = json.load(f)
+    clients = clients_data["clients"]
+
+# Initialize the client manager with all available clients
+client_manager = SpotifyClientManager(clients)
 
 SPOTIFY_PLAYLIST_REGEX = r"https://open\.spotify\.com/playlist/([a-zA-Z0-9]+)"
 
@@ -51,7 +57,11 @@ async def get_creators_from_playlists(client: Client, message: Message):
 
         for idx, pid in enumerate(playlist_ids, start=1):
             try:
-                playlist_info = sp.playlist(pid)
+                playlist_info = await client_manager.make_request(f"https://api.spotify.com/v1/playlists/{pid}")
+                if not playlist_info:
+                    logger.warning(f"Failed to fetch playlist {pid}")
+                    continue
+                    
                 owner = playlist_info.get("owner", {})
                 owner_name = owner.get("display_name", "Unknown")
                 owner_id = owner.get("id", None)
@@ -68,8 +78,11 @@ async def get_creators_from_playlists(client: Client, message: Message):
 
             if idx % 10 == 0 or idx == total:
                 await status_msg.edit(f"🔍 Extracted creators from {idx}/{total} playlists...")
-
-            await asyncio.sleep(0.5)  # To avoid rate limits
+                
+                # Log current client status every 50 playlists
+                if idx % 50 == 0:
+                    status_info = client_manager.get_current_client_info()
+                    logger.info(f"Progress: {idx}/{total}, Client: {status_info['client_index']+1}/{status_info['total_clients']}, IP: {status_info['current_ip']}")
 
         if not creators_dict:
             return await message.reply("❌ No creators found.")
