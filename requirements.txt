@@ -6,7 +6,6 @@ aiogram
 instaloader
 pytz
 instagrapi>=1.16.30
-Pillow==9.1.1
 requests==2.31.0
 urllib3==2.0.3
 yt-dlp>=2025.02.19

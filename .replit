@@ -1,5 +1,19 @@
-modules = ["python-3.12", "bash"]
+modules = ["python-3.10", "python"]
 
 [nix]
 channel = "stable-25_05"
 packages = ["ffmpeg-full", "gitFull", "imagemagickBig", "playwright-driver"]
+
+[deployment]
+run = ["bot.py"]
+
+[workflows]
+
+[[workflows.workflow]]
+name = "Hlo"
+mode = "sequential"
+author = 45640852
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python bot.py"
