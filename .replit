@@ -17,3 +17,7 @@ author = 45640852
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python bot.py"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
