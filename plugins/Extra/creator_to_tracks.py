@@ -29,12 +29,15 @@ def extract_user_id(spotify_url: str) -> str:
         return match.group(1)
     return None
 
-@Client.on_message(filters.command("user") & filters.reply & filters.document)
-async def process_user_file(client: Client, message: Message):
+@Client.on_message(filters.command("user") & filters.reply)
+async def process_usehhjjjr_file(client, message):
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".txt"):
-        await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.", parse_mode=None)
+        await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.")
         return
+
+    args = message.command
+    skip_index = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
 
     file_path = await client.download_media(doc)
 
@@ -43,109 +46,82 @@ async def process_user_file(client: Client, message: Message):
 
     total_users = len(lines)
     if total_users == 0:
-        await message.reply("⚠️ The file is empty or has no valid lines.", parse_mode=None)
+        await message.reply("⚠️ The file is empty or has no valid lines.")
         return
 
-    status_msg = await message.reply(f"⏳ Starting to process {total_users} users from the file...", parse_mode=None)
+    status_msg = await message.reply(f"⏳ Starting to process {total_users} users (Skipping first {skip_index})...")
 
-    global_total_tracks = 0
-    all_users_track_ids = []
+    all_users_data = []
+    batch_data = []
+    batch_start_index = skip_index + 1
+    skipped_users = []
 
     for user_index, line in enumerate(lines, start=1):
+        if user_index <= skip_index:
+            skipped_users.append(user_index)
+            continue
+
         if "-" not in line:
-            await message.reply(f"⚠️ Skipping invalid format line: {line}. Expected format: user - spotify_url", parse_mode=None)
+            skipped_users.append(user_index)
             continue
 
         user_name, url = map(str.strip, line.split("-", 1))
         user_id = extract_user_id(url)
 
         if not user_id:
-            await message.reply(f"⚠️ Invalid Spotify URL for user {user_name}: {url}", parse_mode=None)
+            skipped_users.append(user_index)
             continue
 
         try:
-            await status_msg.edit(
-                f"🔍 [{user_index}/{total_users}] Fetching playlists for user: {user_name} ({user_id})...",
-                parse_mode=None
-            )
+            await status_msg.edit(f"🔍 [{user_index}/{total_users}] Fetching playlists for {user_name} ({user_id})...")
 
             playlists = sp.user_playlists(user_id)
             if not playlists['items']:
-                await status_msg.edit(f"⚠️ No public playlists found for user {user_name}.", parse_mode=None)
+                batch_data.append(f"{user_name} - {url} (No playlists)")
                 continue
-
-            total_playlists = 0
-            total_tracks_user = 0
-            total_playlists_count = playlists.get("total") or None
-            user_track_ids = []
 
             while playlists:
                 for playlist in playlists['items']:
-                    total_playlists += 1
-                    pid = playlist['id']
-                    pname = playlist['name']
-                    tracks = sp.playlist_tracks(pid)
-                    playlist_tracks_count = 0
-
-                    while tracks:
-                        for item in tracks['items']:
-                            track = item['track']
-                            if track:
-                                user_track_ids.append(track['id'])
-                                total_tracks_user += 1
-                                playlist_tracks_count += 1
-                        if tracks['next']:
-                            tracks = sp.next(tracks)
-                        else:
-                            tracks = None
-
-                    global_total_tracks += playlist_tracks_count
-
-                    await status_msg.edit(
-                        f"🔄 Processing User {user_index} / {total_users}\n"
-                        f"🎵 Tracks found in current playlist: {playlist_tracks_count}\n"
-                        f"📀 Playlists processed for this user: {total_playlists} / {total_playlists_count or '?'}\n"
-                        f"🎵 Total tracks for this user: {total_tracks_user}\n\n"
-                        f"👥 Total users processed: {user_index} / {total_users}\n"
-                        f"🎧 Total tracks collected from ALL users: {global_total_tracks}",
-                        parse_mode=None
-                    )
-                    await asyncio.sleep(1)
-
-                if playlists['next']:
+                    pname = playlist.get("name", "Unnamed Playlist")
+                    purl = playlist.get("external_urls", {}).get("spotify", "URL not found")
+                    batch_data.append(f"{user_name} - {pname} - {purl}")
+                if playlists.get('next'):
                     playlists = sp.next(playlists)
                 else:
-                    playlists = None
-
-            unique_user_tracks = list(set(user_track_ids))
-            all_users_track_ids.extend(unique_user_tracks)
-
-            await status_msg.edit(
-                f"✅ Completed [{user_index}/{total_users}]: {user_name}\n"
-                f"📀 Total playlists: {total_playlists}\n"
-                f"🎵 Unique tracks: {len(unique_user_tracks)}\n"
-                f"🎧 Total tracks collected from ALL users: {global_total_tracks}",
-                parse_mode=None
-            )
+                    break
 
         except Exception as e:
-            await message.reply(f"❌ Error fetching tracks for {user_name}: {e}", parse_mode=None)
-            logger.error(f"Error fetching tracks for user {user_id}: {e}")
+            logger.error(f"Error processing {user_name} ({user_id}): {e}")
+            batch_data.append(f"{user_name} - ERROR: {str(e)}")
+            continue
 
-    all_unique_tracks = list(set(all_users_track_ids))
-    timestamp = int(time.time())
-    file_name = f"all_users_tracks_{timestamp}.txt"
+        if len(batch_data) >= 50 or user_index == total_users:
+            batch_end_index = user_index
+            timestamp = int(time.time())
+            file_name = f"user_playlists_{batch_start_index}_to_{batch_end_index}_{timestamp}.txt"
 
-    with open(file_name, "w", encoding="utf-8") as f:
-        for tid in all_unique_tracks:
-            f.write(f"{tid}\n")
+            with open(file_name, "w", encoding="utf-8") as f:
+                for line in batch_data:
+                    f.write(f"{line}\n")
 
-    await client.send_document(
-        chat_id=message.chat.id,
-        document=file_name,
-        caption=f"✅ Total unique track IDs from all users: {len(all_unique_tracks)}"
-    )
-    os.remove(file_name)
+            caption_lines = [
+                f"📂 User Batch: {batch_start_index} to {batch_end_index}",
+                f"✅ Total entries: {len(batch_data)}"
+            ]
+            if skipped_users:
+                skipped_in_batch = [i for i in skipped_users if batch_start_index <= i <= batch_end_index]
+                if skipped_in_batch:
+                    caption_lines.append(f"⚠️ Skipped users: {', '.join(map(str, skipped_in_batch))}")
+
+            await client.send_document(
+                chat_id=message.chat.id,
+                document=file_name,
+                caption="\n".join(caption_lines)
+            )
+
+            os.remove(file_name)
+            batch_data = []
+            batch_start_index = user_index + 1
+
+    await status_msg.edit("🎉 All users processed. Check chat for playlist batches.")
     os.remove(file_path)
-
-    await status_msg.edit("🎉 All users processed. Check your chat for the combined tracks file!", parse_mode=None)
