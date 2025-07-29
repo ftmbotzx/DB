@@ -30,7 +30,11 @@ def extract_user_id(spotify_url: str) -> str:
     return None
 
 @Client.on_message(filters.command("user") & filters.reply)
-async def process_usehhhr_file(client, message):
+async def process_hhuser_file(client, message):
+    import time
+    import os
+    import logging
+
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".txt"):
         await message.reply("❗ Please reply to a valid .txt file containing lines in `User - SpotifyURL` format.")
@@ -53,7 +57,6 @@ async def process_usehhhr_file(client, message):
     batch_data = []
     skipped_users = []
     batch_start_index = None
-    batch_number = 1
     current_batch_user_count = 0
 
     for user_index, line in enumerate(lines, start=1):
@@ -100,32 +103,40 @@ async def process_usehhhr_file(client, message):
 
         current_batch_user_count += 1
 
-        # 🧾 Send file every 50 users or last user
+        # Send after every 50 users OR last user
         if current_batch_user_count == 50 or user_index == total_users:
             batch_end_index = user_index
-            file_name = f"user_batch_{batch_start_index}_to_{batch_end_index}.txt"
+            timestamp = int(time.time())
+            file_name = f"user_batch_{batch_start_index}_to_{batch_end_index}_{timestamp}.txt"
 
             with open(file_name, "w", encoding="utf-8") as f:
                 for line in batch_data:
                     f.write(line + "\n")
 
+            # Prepare safe caption
             caption_lines = [
                 f"📁 User Batch: {batch_start_index} to {batch_end_index}",
                 f"🧾 Total entries: {len(batch_data)}"
             ]
             skipped_in_this_batch = [str(i) for i in skipped_users if batch_start_index <= i <= batch_end_index]
             if skipped_in_this_batch:
-                caption_lines.append(f"⚠️ Skipped users: {', '.join(skipped_in_this_batch)}")
+                if len(skipped_in_this_batch) > 10:
+                    shown = ', '.join(skipped_in_this_batch[:10])
+                    caption_lines.append(f"⚠️ Skipped users: {shown} + {len(skipped_in_this_batch) - 10} more")
+                else:
+                    caption_lines.append(f"⚠️ Skipped users: {', '.join(skipped_in_this_batch)}")
+
+            final_caption = "\n".join(caption_lines)
+            if len(final_caption) > 1024:
+                final_caption = final_caption[:1020] + "..."
 
             await client.send_document(
                 chat_id=message.chat.id,
                 document=file_name,
-                caption="\n".join(caption_lines)
+                caption=final_caption
             )
 
             os.remove(file_name)
-
-            # Reset batch data
             batch_data = []
             current_batch_user_count = 0
             batch_start_index = None
