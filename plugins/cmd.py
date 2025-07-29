@@ -122,7 +122,7 @@ def extract_user_id(spotify_url: str) -> str:
         return match.group(1)
     return None
 
-@Client.on_message(filters.command("abc") & filters.reply & filters.document)
+@Client.on_message(filters.command("abc") & filters.reply)
 async def process_userbbb_file(client, message):
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".txt"):
