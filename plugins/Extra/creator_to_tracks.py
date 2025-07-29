@@ -30,31 +30,31 @@ def extract_user_id(spotify_url: str) -> str:
     return None
 
 @Client.on_message(filters.command("user") & filters.reply)
-async def process_usehhjjjr_file(client, message):
+async def process_user_file(client, message):
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".txt"):
-        await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.")
+        await message.reply("❗ Please reply to a valid .txt file containing lines in `User - SpotifyURL` format.")
         return
 
     args = message.command
     skip_index = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
 
     file_path = await client.download_media(doc)
-
     with open(file_path, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
 
     total_users = len(lines)
     if total_users == 0:
-        await message.reply("⚠️ The file is empty or has no valid lines.")
+        await message.reply("⚠️ File is empty.")
         return
 
-    status_msg = await message.reply(f"⏳ Starting to process {total_users} users (Skipping first {skip_index})...")
+    status_msg = await message.reply(f"⏳ Starting to process {total_users} users...")
 
-    all_users_data = []
     batch_data = []
-    batch_start_index = skip_index + 1
     skipped_users = []
+    batch_start_index = None
+    batch_number = 1
+    current_batch_user_count = 0
 
     for user_index, line in enumerate(lines, start=1):
         if user_index <= skip_index:
@@ -67,51 +67,55 @@ async def process_usehhjjjr_file(client, message):
 
         user_name, url = map(str.strip, line.split("-", 1))
         user_id = extract_user_id(url)
-
         if not user_id:
             skipped_users.append(user_index)
             continue
 
+        if batch_start_index is None:
+            batch_start_index = user_index
+
         try:
-            await status_msg.edit(f"🔍 [{user_index}/{total_users}] Fetching playlists for {user_name} ({user_id})...")
-
+            await status_msg.edit(f"📥 [{user_index}/{total_users}] Fetching playlists for: {user_name}")
             playlists = sp.user_playlists(user_id)
-            if not playlists['items']:
-                batch_data.append(f"{user_name} - {url} (No playlists)")
-                continue
 
+            has_playlist = False
             while playlists:
                 for playlist in playlists['items']:
-                    pname = playlist.get("name", "Unnamed Playlist")
-                    purl = playlist.get("external_urls", {}).get("spotify", "URL not found")
+                    pname = playlist.get("name", "Unnamed")
+                    purl = playlist.get("external_urls", {}).get("spotify", "N/A")
                     batch_data.append(f"{user_name} - {pname} - {purl}")
-                if playlists.get('next'):
+                    has_playlist = True
+                if playlists.get("next"):
                     playlists = sp.next(playlists)
                 else:
                     break
 
+            if not has_playlist:
+                batch_data.append(f"{user_name} - No public playlists found.")
+
         except Exception as e:
-            logger.error(f"Error processing {user_name} ({user_id}): {e}")
-            batch_data.append(f"{user_name} - ERROR: {str(e)}")
+            batch_data.append(f"{user_name} - ERROR: {e}")
+            skipped_users.append(user_index)
             continue
 
-        if len(batch_data) >= 50 or user_index == total_users:
+        current_batch_user_count += 1
+
+        # 🧾 Send file every 50 users or last user
+        if current_batch_user_count == 50 or user_index == total_users:
             batch_end_index = user_index
-            timestamp = int(time.time())
-            file_name = f"user_playlists_{batch_start_index}_to_{batch_end_index}_{timestamp}.txt"
+            file_name = f"user_batch_{batch_start_index}_to_{batch_end_index}.txt"
 
             with open(file_name, "w", encoding="utf-8") as f:
                 for line in batch_data:
-                    f.write(f"{line}\n")
+                    f.write(line + "\n")
 
             caption_lines = [
-                f"📂 User Batch: {batch_start_index} to {batch_end_index}",
-                f"✅ Total entries: {len(batch_data)}"
+                f"📁 User Batch: {batch_start_index} to {batch_end_index}",
+                f"🧾 Total entries: {len(batch_data)}"
             ]
-            if skipped_users:
-                skipped_in_batch = [i for i in skipped_users if batch_start_index <= i <= batch_end_index]
-                if skipped_in_batch:
-                    caption_lines.append(f"⚠️ Skipped users: {', '.join(map(str, skipped_in_batch))}")
+            skipped_in_this_batch = [str(i) for i in skipped_users if batch_start_index <= i <= batch_end_index]
+            if skipped_in_this_batch:
+                caption_lines.append(f"⚠️ Skipped users: {', '.join(skipped_in_this_batch)}")
 
             await client.send_document(
                 chat_id=message.chat.id,
@@ -120,8 +124,12 @@ async def process_usehhjjjr_file(client, message):
             )
 
             os.remove(file_name)
-            batch_data = []
-            batch_start_index = user_index + 1
 
-    await status_msg.edit("🎉 All users processed. Check chat for playlist batches.")
+            # Reset batch data
+            batch_data = []
+            current_batch_user_count = 0
+            batch_start_index = None
+
+    await status_msg.edit("✅ All users processed. Check chat for batches.")
     os.remove(file_path)
+    
