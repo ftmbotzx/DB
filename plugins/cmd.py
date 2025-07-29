@@ -123,7 +123,7 @@ def extract_user_id(spotify_url: str) -> str:
     return None
 
 @Client.on_message(filters.command("abc") & filters.reply & filters.document)
-async def process_user_file(client: Client, message: Message):
+async def process_userbbb_file(client, message):
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".txt"):
         await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.", parse_mode=None)
