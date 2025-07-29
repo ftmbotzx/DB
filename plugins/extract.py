@@ -127,7 +127,7 @@ async def user_tracks_split(client, message):
         await status.edit(f"❌ Error: `{e}`")
 
 
-@Client.on_message(filters.command("user"))
+@Client.on_message(filters.command("users"))
 async def usernn_count(client, message):
     if len(message.command) < 2:
         await message.reply("❗ Usage: hlo")
