@@ -1,53 +1,151 @@
-# plugins/check_clients.py
-
+import os
+import time
+import logging
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-import aiohttp
-import base64
-import asyncio
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
 
-client_credentials = [
-    ("5561376fd0234838863a8c3a6cbb0865", "fa12e995f56c48a28e28fb056e041d18"),
-    ("a8c78174e7524e109d669ee67bbad3f2", "3074289c88ac4071bef5c11ca210a8e5"),
+# -------- Logger Setup --------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger(__name__)
 
-]
+# -------- Spotify Credentials --------
+SPOTIFY_CLIENT_ID = "9bef0c79a4854066b037dc94b0f2b317"
+SPOTIFY_CLIENT_SECRET = "11b3d3eb75e449ac8af69c1ebecf8eab"
 
-async def check_credentials(session, client_id, client_secret):
-    auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    headers = {
-        "Authorization": f"Basic {auth}",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    data = {"grant_type": "client_credentials"}
+auth_manager = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
+sp = spotipy.Spotify(auth_manager=auth_manager)
 
-    try:
-        async with session.post("https://accounts.spotify.com/api/token", headers=headers, data=data) as resp:
-            status = resp.status
-            if status == 200:
-                return f"✅ `{client_id}` — Working"
-            elif status == 429:
-                return f"⚠️ `{client_id}` — Rate Limited"
-            elif status in [400, 401]:
-                return f"❌ `{client_id}` — Invalid"
-            else:
-                return f"❓ `{client_id}` — Unknown Error ({status})"
-    except Exception as e:
-        return f"❌ `{client_id}` — Error: {e}"
+def extract_user_id(spotify_url: str) -> str:
+    import re
+    match = re.search(r"open\.spotify\.com/user/([a-zA-Z0-9]+)", spotify_url)
+    if match:
+        return match.group(1)
+    return None
 
-@Client.on_message(filters.command("test") & filters.private)
-async def check_spotify_clients(_, message: Message):
-    status_msg = await message.reply("🔍 Checking all Spotify client credentials...")
+@Client.on_message(filters.command("user") & filters.reply & filters.document)
+async def process_user_file(client: Client, message: Message):
+    doc = message.reply_to_message.document
+    if not doc.file_name.endswith(".txt"):
+        await message.reply("❗ Please reply to a valid .txt file containing lines in user - spotify_url format.", parse_mode=None)
+        return
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [
-            check_credentials(session, cid, secret)
-            for cid, secret in client_credentials
-        ]
-        results = await asyncio.gather(*tasks)
+    file_path = await client.download_media(doc)
 
-    result_text = "\n".join(results)
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
 
-    if len(result_text) > 4096:
-        result_text = result_text[:4090] + "\n\n⚠️ Output truncated..."
+    total_users = len(lines)
+    if total_users == 0:
+        await message.reply("⚠️ The file is empty or has no valid lines.", parse_mode=None)
+        return
 
-    await status_msg.edit_text(f"🔎 **Spotify Client Check Result:**\n\n{result_text}")
+    status_msg = await message.reply(f"⏳ Starting to process {total_users} users from the file...", parse_mode=None)
+
+    global_total_tracks = 0
+    all_users_track_ids = []
+
+    for user_index, line in enumerate(lines, start=1):
+        if "-" not in line:
+            await message.reply(f"⚠️ Skipping invalid format line: {line}. Expected format: user - spotify_url", parse_mode=None)
+            continue
+
+        user_name, url = map(str.strip, line.split("-", 1))
+        user_id = extract_user_id(url)
+
+        if not user_id:
+            await message.reply(f"⚠️ Invalid Spotify URL for user {user_name}: {url}", parse_mode=None)
+            continue
+
+        try:
+            await status_msg.edit(
+                f"🔍 [{user_index}/{total_users}] Fetching playlists for user: {user_name} ({user_id})...",
+                parse_mode=None
+            )
+
+            playlists = sp.user_playlists(user_id)
+            if not playlists['items']:
+                await status_msg.edit(f"⚠️ No public playlists found for user {user_name}.", parse_mode=None)
+                continue
+
+            total_playlists = 0
+            total_tracks_user = 0
+            total_playlists_count = playlists.get("total") or None
+            user_track_ids = []
+
+            while playlists:
+                for playlist in playlists['items']:
+                    total_playlists += 1
+                    pid = playlist['id']
+                    pname = playlist['name']
+                    tracks = sp.playlist_tracks(pid)
+                    playlist_tracks_count = 0
+
+                    while tracks:
+                        for item in tracks['items']:
+                            track = item['track']
+                            if track:
+                                user_track_ids.append(track['id'])
+                                total_tracks_user += 1
+                                playlist_tracks_count += 1
+                        if tracks['next']:
+                            tracks = sp.next(tracks)
+                        else:
+                            tracks = None
+
+                    global_total_tracks += playlist_tracks_count
+
+                    await status_msg.edit(
+                        f"🔄 Processing User {user_index} / {total_users}\n"
+                        f"🎵 Tracks found in current playlist: {playlist_tracks_count}\n"
+                        f"📀 Playlists processed for this user: {total_playlists} / {total_playlists_count or '?'}\n"
+                        f"🎵 Total tracks for this user: {total_tracks_user}\n\n"
+                        f"👥 Total users processed: {user_index} / {total_users}\n"
+                        f"🎧 Total tracks collected from ALL users: {global_total_tracks}",
+                        parse_mode=None
+                    )
+                    await asyncio.sleep(1)
+
+                if playlists['next']:
+                    playlists = sp.next(playlists)
+                else:
+                    playlists = None
+
+            unique_user_tracks = list(set(user_track_ids))
+            all_users_track_ids.extend(unique_user_tracks)
+
+            await status_msg.edit(
+                f"✅ Completed [{user_index}/{total_users}]: {user_name}\n"
+                f"📀 Total playlists: {total_playlists}\n"
+                f"🎵 Unique tracks: {len(unique_user_tracks)}\n"
+                f"🎧 Total tracks collected from ALL users: {global_total_tracks}",
+                parse_mode=None
+            )
+
+        except Exception as e:
+            await message.reply(f"❌ Error fetching tracks for {user_name}: {e}", parse_mode=None)
+            logger.error(f"Error fetching tracks for user {user_id}: {e}")
+
+    all_unique_tracks = list(set(all_users_track_ids))
+    timestamp = int(time.time())
+    file_name = f"all_users_tracks_{timestamp}.txt"
+
+    with open(file_name, "w", encoding="utf-8") as f:
+        for tid in all_unique_tracks:
+            f.write(f"{tid}\n")
+
+    await client.send_document(
+        chat_id=message.chat.id,
+        document=file_name,
+        caption=f"✅ Total unique track IDs from all users: {len(all_unique_tracks)}"
+    )
+    os.remove(file_name)
+    os.remove(file_path)
+
+    await status_msg.edit("🎉 All users processed. Check your chat for the combined tracks file!", parse_mode=None)
